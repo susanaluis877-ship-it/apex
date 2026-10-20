@@ -78,6 +78,35 @@ public class ScreenMatcherTest {
         assertEquals(new HashSet<>(java.util.Arrays.asList("a", "b")), names);
     }
 
+    @Test
+    public void inlineConditionSeesWholeScreen() {
+        ScreenMatcher twoButtons = custom(s -> By.clickable(true).findAll(s).size() == 1
+                && "com.foo".equals(s.getPackageName()));
+        assertTrue(twoButtons.matches(screen));
+        assertFalse(custom(s -> By.text("设置").findFirst(s) != null).matches(screen));
+    }
+
+    @Test
+    public void inlineConditionComposesAndNeedsNoRegistration() {
+        ScreenCondition isHome = s -> s.getActivity() != null && s.getActivity().endsWith("HomeActivity");
+        assertTrue(allOf(pkg("com.foo"), custom(isHome)).matches(screen));
+        assertFalse(not(custom(isHome)).matches(screen));
+        assertTrue(anyOf(custom(s -> false), has(By.text("首页"))).matches(screen));
+
+        Set<String> names = new HashSet<>();
+        allOf(custom(isHome), custom(s -> true)).collectCustomNames(names);
+        assertTrue(names.isEmpty());
+    }
+
+    @Test
+    public void inlineConditionsAreEqualOnlyForSameFunction() {
+        ScreenCondition c = s -> true;
+        assertEquals(custom(c), custom(c));
+        assertEquals(custom(c).hashCode(), custom(c).hashCode());
+        assertFalse(custom(c).equals(custom(s -> true)));
+        assertEquals("custom(<inline>)", custom(c).toString());
+    }
+
     @Test(expected = IllegalStateException.class)
     public void unregisteredCustomMatcherFailsLoudly() {
         custom("missing").matches(screen);

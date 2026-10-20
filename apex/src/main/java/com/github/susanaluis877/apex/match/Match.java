@@ -98,7 +98,17 @@ public final class Match {
         return Always.INSTANCE;
     }
 
-    /** 引用通过 {@code Apex.registerMatcher} 注册的自定义条件。 */
+    /**
+     * 用代码写的条件，函数返回 true 表示匹配。可以和其他条件任意组合，例如
+     * {@code allOf(pkg("com.foo"), custom(screen -> ...))}。
+     *
+     * <p>只能在 Java DSL 里使用。两个内联条件只有是同一个函数对象时才相等。
+     */
+    public static ScreenMatcher custom(ScreenCondition condition) {
+        return new Inline(Objects.requireNonNull(condition, "condition"));
+    }
+
+    /** 引用通过 {@code Apex.registerMatcher} 注册的自定义条件，JSON 里的 {@code "custom"} 对应这个写法。 */
     public static ScreenMatcher custom(String name) {
         return custom(name, Collections.emptyMap());
     }
@@ -341,6 +351,38 @@ public final class Match {
         @Override
         public String toString() {
             return "always";
+        }
+    }
+
+    private static final class Inline extends ScreenMatcher {
+        private final ScreenCondition condition;
+
+        Inline(ScreenCondition condition) {
+            this.condition = condition;
+        }
+
+        @Override
+        public boolean matches(ScreenSnapshot screen) {
+            return condition.test(screen);
+        }
+
+        @Override
+        public void collectCustomNames(Set<String> out) {
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Inline && condition == ((Inline) o).condition;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(condition);
+        }
+
+        @Override
+        public String toString() {
+            return "custom(<inline>)";
         }
     }
 

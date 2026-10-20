@@ -399,6 +399,39 @@ public class FlowEngineTest {
     }
 
     @Test
+    public void inlineConditionDrivesTransitions() {
+        // 用代码判断“领取按钮可用且页面上没有广告”，不需要注册
+        Flow flow = new Flow.Builder("inline").start("home")
+                .state("home", s -> s.match(has(By.id("start"))).action(click(By.id("start"))).next("task"))
+                .state("task", s -> s
+                        .match(com.github.susanaluis877.apex.match.Match.custom(screen -> {
+                            UiNode claim = By.id("claim").findFirst(screen);
+                            return claim != null && claim.isEnabled() && By.text("AD").findFirst(screen) == null;
+                        }))
+                        .action(click(By.id("claim"))).next("done"))
+                .state("done", s -> s.match(has(By.textContains("Reward claimed"))).endSuccess())
+                .build();
+        app.claimEnabled = false;
+        device.at(3_000, () -> app.update(() -> app.claimEnabled = true));
+        RunResult r = run(flow);
+        assertEquals(r.toString(), Status.SUCCESS, r.getStatus());
+        assertEquals(Arrays.asList("home", "task", "done"), r.getPath());
+        assertTrue("按钮可用之前不能点", device.logTimes.get(1) >= 3_000);
+    }
+
+    @Test
+    public void inlineConditionExceptionEndsWithError() {
+        Flow flow = new Flow.Builder("inline").start("home")
+                .state("home", s -> s.match(com.github.susanaluis877.apex.match.Match.custom(screen -> {
+                    throw new IllegalStateException("inline bug");
+                })).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.ERROR, r.getStatus());
+        assertTrue(r.getMessage(), r.getMessage().contains("inline bug"));
+    }
+
+    @Test
     public void customMatcherExceptionEndsWithError() {
         Registry.get().registerMatcher("bad", (screen, args) -> {
             throw new IllegalStateException("matcher bug");

@@ -27,7 +27,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.2.0")
+    implementation("com.github.susanaluis877-ship-it:apex:0.2.1")
 }
 ```
 
@@ -202,7 +202,7 @@ try {
 | `not` | `not(matcher)` | |
 | `allOf` / `anyOf` | `allOf(...)` / `anyOf(...)` | 子条件数组 |
 | `always` | `always()` | 只能写 `true`，任何屏幕都匹配 |
-| `custom` | `Match.custom(name, args)` | `"名字"` 或 `{"name": ..., "args": {...}}` |
+| `custom` | `Match.custom(name, args)` | 引用注册过的条件：`"名字"` 或 `{"name": ..., "args": {...}}`。DSL 里还可以直接传函数 `custom(screen -> ...)`，见下文 |
 
 ### 节点选择器 selector
 
@@ -242,7 +242,33 @@ try {
 
 ## 自定义动作和条件
 
-先注册，再构建或解析引用它们的流程：
+### 用代码写匹配条件
+
+内置条件不够用时，可以把一个函数直接传给 `custom(...)`。函数拿到整个屏幕快照 `ScreenSnapshot`，返回 true 表示匹配：
+
+```java
+.state("task", s -> s
+        .match(custom(screen -> {
+            // 余额 >= 100 才去提现
+            UiNode balance = By.id("tv_balance").findFirst(screen);
+            if (balance == null || balance.getText() == null) {
+                return false;
+            }
+            String digits = balance.getText().replaceAll("[^0-9]", "");
+            return !digits.isEmpty() && Long.parseLong(digits) >= 100;
+        }))
+        .action(click(By.text("提现")))
+        .next("done"))
+```
+
+- **能用的信息。** 快照提供 `getPackageName()`、`getActivity()`、`getWindows()`（从上到下）、`nodes()`（全部节点）、`getScreenWidth()`/`getScreenHeight()`。节点 `UiNode` 提供文本、id、位置、状态，以及 `getParent()`/`getChildren()`，可以按父子关系判断。`By.xxx(...).findFirst(screen)` / `findAll(screen)` 可以在快照里查找节点。
+- **可以组合。** 它和其他条件一样，例如 `allOf(pkg("com.foo"), custom(screen -> ...))`，也可以用在拦截器的 `match` 上。
+- **运行环境。** 函数在引擎线程上执行，每一轮可能调用多次。不要在里面做耗时操作或修改界面；抛出异常时流程以 `ERROR` 结束。
+- **只能在 DSL 里用。** JSON 没法写函数，JSON 流程要用下面按名字注册的方式。
+
+### 按名字注册
+
+需要在 JSON 里引用，或者要在多个流程里复用时，按名字注册。必须先注册，再构建或解析引用它们的流程：
 
 ```java
 Apex.registerMatcher("hasBadge", (screen, args) ->
