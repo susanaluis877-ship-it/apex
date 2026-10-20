@@ -7,6 +7,7 @@ import com.github.susanaluis877.apex.match.ScreenMatcher;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
@@ -38,6 +39,8 @@ public final class Flow {
     private final int maxSteps;
     private final int maxInterceptions;
     private final FlowDefaults defaults;
+    private final boolean useGlobalInterceptors;
+    private final Set<String> excludedGlobalInterceptors;
 
     private Flow(Builder b, Map<String, State> states, List<Interceptor> interceptors, FlowDefaults defaults) {
         this.id = b.id;
@@ -48,6 +51,8 @@ public final class Flow {
         this.maxSteps = b.maxSteps;
         this.maxInterceptions = b.maxInterceptions;
         this.defaults = defaults;
+        this.useGlobalInterceptors = b.useGlobalInterceptors;
+        this.excludedGlobalInterceptors = Collections.unmodifiableSet(new TreeSet<>(b.excludedGlobalInterceptors));
     }
 
     public String getId() {
@@ -94,6 +99,37 @@ public final class Flow {
         return defaults;
     }
 
+    /** 是否使用通过 {@code Apex.addGlobalInterceptor} 注册的全局拦截器，默认 true。 */
+    public boolean isUseGlobalInterceptors() {
+        return useGlobalInterceptors;
+    }
+
+    /** 这个流程不使用的全局拦截器 id。 */
+    public Set<String> getExcludedGlobalInterceptors() {
+        return excludedGlobalInterceptors;
+    }
+
+    /**
+     * 本次运行实际生效的拦截器：先是流程自己的，再按注册顺序接上全局拦截器。
+     * 与流程自己的拦截器同 id 的、被排除的全局拦截器会被跳过；{@link #isUseGlobalInterceptors()} 为 false 时不加任何全局拦截器。
+     */
+    public List<Interceptor> effectiveInterceptors(List<Interceptor> globalInterceptors) {
+        List<Interceptor> result = new ArrayList<>(interceptors);
+        if (!useGlobalInterceptors) {
+            return result;
+        }
+        Set<String> own = new HashSet<>();
+        for (Interceptor interceptor : interceptors) {
+            own.add(interceptor.getId());
+        }
+        for (Interceptor global : globalInterceptors) {
+            if (!own.contains(global.getId()) && !excludedGlobalInterceptors.contains(global.getId())) {
+                result.add(global);
+            }
+        }
+        return result;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (!(o instanceof Flow)) {
@@ -102,12 +138,15 @@ public final class Flow {
         Flow f = (Flow) o;
         return id.equals(f.id) && start.equals(f.start) && getStates().equals(f.getStates())
                 && interceptors.equals(f.interceptors) && timeoutMs == f.timeoutMs && maxSteps == f.maxSteps
-                && maxInterceptions == f.maxInterceptions && defaults.equals(f.defaults);
+                && maxInterceptions == f.maxInterceptions && defaults.equals(f.defaults)
+                && useGlobalInterceptors == f.useGlobalInterceptors
+                && excludedGlobalInterceptors.equals(f.excludedGlobalInterceptors);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, start, getStates(), interceptors, timeoutMs, maxSteps, maxInterceptions, defaults);
+        return Objects.hash(id, start, getStates(), interceptors, timeoutMs, maxSteps, maxInterceptions, defaults,
+                useGlobalInterceptors, excludedGlobalInterceptors);
     }
 
     @Override
@@ -128,6 +167,8 @@ public final class Flow {
         private final List<State.Builder> stateBuilders = new ArrayList<>();
         private final List<String> interceptorIds = new ArrayList<>();
         private final List<Interceptor.Builder> interceptorBuilders = new ArrayList<>();
+        private boolean useGlobalInterceptors = true;
+        private final Set<String> excludedGlobalInterceptors = new TreeSet<>();
 
         public Builder(String id) {
             this.id = id;
@@ -163,6 +204,18 @@ public final class Flow {
             config.accept(b);
             stateIds.add(id);
             stateBuilders.add(b);
+            return this;
+        }
+
+        /** 是否使用全局拦截器，默认 true。 */
+        public Builder useGlobalInterceptors(boolean use) {
+            useGlobalInterceptors = use;
+            return this;
+        }
+
+        /** 这个流程不使用指定的全局拦截器，例如某个弹窗正是这个流程的一步。 */
+        public Builder excludeGlobalInterceptors(String... ids) {
+            excludedGlobalInterceptors.addAll(Arrays.asList(ids));
             return this;
         }
 
@@ -303,27 +356,32 @@ public final class Flow {
             Set<String> ids = new HashSet<>();
             for (int i = 0; i < interceptorIds.size(); i++) {
                 String iid = interceptorIds.get(i);
-                Interceptor.Builder b = interceptorBuilders.get(i);
-                if (iid == null || iid.isEmpty()) {
-                    problems.add(interceptorProblem(i, iid, "id", -1, "interceptor id is required"));
-                } else if (!ids.add(iid)) {
+                if (iid != null && !iid.isEmpty() && !ids.add(iid)) {
                     problems.add(interceptorProblem(i, iid, "id", -1, "duplicate interceptor id"));
                 }
-                if (b.matcher() == null) {
-                    problems.add(interceptorProblem(i, iid, "match", -1, "match is required"));
-                } else {
-                    checkCustomMatchers(b.matcher(), Interceptor.class, i, iid, problems);
-                }
-                if (b.actionList().isEmpty()) {
-                    problems.add(interceptorProblem(i, iid, "actions", -1, "interceptor needs at least one action"));
-                }
-                checkCustomActions(b.actionList(), Interceptor.class, i, iid, problems);
-                if (b.maxTimesValue() != null && b.maxTimesValue() <= 0) {
-                    problems.add(interceptorProblem(i, iid, "maxTimes", -1, "must be > 0"));
-                }
-                if (b.cooldownValue() != null && b.cooldownValue() < 0) {
-                    problems.add(interceptorProblem(i, iid, "cooldownMs", -1, "must be >= 0"));
-                }
+                checkInterceptor(i, iid, interceptorBuilders.get(i), problems);
+            }
+        }
+
+        /** 单个拦截器的校验，流程里的拦截器和全局拦截器共用。全局拦截器的 ordinal 为 -1。 */
+        static void checkInterceptor(int i, String iid, Interceptor.Builder b, List<Problem> problems) {
+            if (iid == null || iid.isEmpty()) {
+                problems.add(interceptorProblem(i, iid, "id", -1, "interceptor id is required"));
+            }
+            if (b.matcher() == null) {
+                problems.add(interceptorProblem(i, iid, "match", -1, "match is required"));
+            } else {
+                checkCustomMatchers(b.matcher(), Interceptor.class, i, iid, problems);
+            }
+            if (b.actionList().isEmpty()) {
+                problems.add(interceptorProblem(i, iid, "actions", -1, "interceptor needs at least one action"));
+            }
+            checkCustomActions(b.actionList(), Interceptor.class, i, iid, problems);
+            if (b.maxTimesValue() != null && b.maxTimesValue() <= 0) {
+                problems.add(interceptorProblem(i, iid, "maxTimes", -1, "must be > 0"));
+            }
+            if (b.cooldownValue() != null && b.cooldownValue() < 0) {
+                problems.add(interceptorProblem(i, iid, "cooldownMs", -1, "must be >= 0"));
             }
         }
 
@@ -350,7 +408,7 @@ public final class Flow {
             }
         }
 
-        private void checkCustomMatchers(ScreenMatcher matcher, Class<?> owner, int ordinal, String ownerId,
+        private static void checkCustomMatchers(ScreenMatcher matcher, Class<?> owner, int ordinal, String ownerId,
                                          List<Problem> problems) {
             Set<String> names = new TreeSet<>();
             matcher.collectCustomNames(names);
@@ -362,7 +420,7 @@ public final class Flow {
             }
         }
 
-        private void checkCustomActions(List<Action> actions, Class<?> owner, int ordinal, String ownerId,
+        private static void checkCustomActions(List<Action> actions, Class<?> owner, int ordinal, String ownerId,
                                         List<Problem> problems) {
             for (int k = 0; k < actions.size(); k++) {
                 Action a = actions.get(k);

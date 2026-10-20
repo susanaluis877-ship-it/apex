@@ -69,7 +69,7 @@ public final class FlowParser {
 
     private static Flow parseFlow(JSONObject o) throws FlowParseException {
         checkKeys(o, "", "schema", "id", "start", "timeoutMs", "maxSteps", "maxInterceptions",
-                "defaults", "states", "interceptors");
+                "defaults", "states", "interceptors", "useGlobalInterceptors", "excludeGlobalInterceptors");
         Long schema = optLong(o, "schema", "");
         if (schema != null && schema != SCHEMA_VERSION) {
             throw new FlowParseException("schema",
@@ -91,6 +91,20 @@ public final class FlowParser {
         Integer maxInterceptions = optInt(o, "maxInterceptions", "");
         if (maxInterceptions != null) {
             b.maxInterceptions(maxInterceptions);
+        }
+        Boolean useGlobal = optBoolean(o, "useGlobalInterceptors", "");
+        if (useGlobal != null) {
+            b.useGlobalInterceptors(useGlobal);
+        }
+        JSONArray excluded = optArray(o, "excludeGlobalInterceptors", "");
+        if (excluded != null) {
+            for (int i = 0; i < excluded.length(); i++) {
+                Object item = excluded.opt(i);
+                if (!(item instanceof String)) {
+                    throw new FlowParseException("excludeGlobalInterceptors[" + i + "]", "expected string");
+                }
+                b.excludeGlobalInterceptors((String) item);
+            }
         }
         JSONObject defaults = optObject(o, "defaults", "");
         if (defaults != null) {

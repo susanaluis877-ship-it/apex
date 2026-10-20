@@ -21,6 +21,16 @@ public class FlowParserTest {
     }
 
     @Test
+    public void globalInterceptorOptions() throws Exception {
+        Flow flow = FlowParser.parse("{\"id\": \"f\", \"start\": \"a\", \"useGlobalInterceptors\": false,"
+                + " \"excludeGlobalInterceptors\": [\"ad\", \"perm\"], \"states\": " + STATES + "}");
+        assertEquals(false, flow.isUseGlobalInterceptors());
+        assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList("ad", "perm")), flow.getExcludedGlobalInterceptors());
+        assertError("{\"id\": \"f\", \"start\": \"a\", \"excludeGlobalInterceptors\": [1], \"states\": " + STATES + "}",
+                "excludeGlobalInterceptors[0]", "expected string");
+    }
+
+    @Test
     public void explicitNullIsTreatedAsMissing() throws Exception {
         Flow flow = FlowParser.parse("{\"id\": \"f\", \"start\": \"a\", \"timeoutMs\": null, \"states\": " + STATES + "}");
         assertEquals(Flow.DEFAULT_TIMEOUT_MS, flow.getTimeoutMs());

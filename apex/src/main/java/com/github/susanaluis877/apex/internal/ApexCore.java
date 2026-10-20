@@ -137,8 +137,8 @@ public final class ApexCore {
             try {
                 AccessibilityScreenSource source = new AccessibilityScreenSource(this::service, activityTracker);
                 AndroidActionExecutor executor = new AndroidActionExecutor(source, this::service);
-                result = new FlowEngine(runId, flow, source, executor, Clock.SYSTEM, run.controller,
-                        mainListener, EngineConfig.DEFAULT).run();
+                result = new FlowEngine(runId, flow, Registry.get().globalInterceptors(), source, executor,
+                        Clock.SYSTEM, run.controller, mainListener, EngineConfig.DEFAULT).run();
             } catch (Throwable t) {
                 ApexLog.e("[" + runId + "] run crashed", t);
                 result = RunResult.notStarted(RunResult.Status.ERROR, flowId, "internal error: " + t);

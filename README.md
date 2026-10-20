@@ -2,12 +2,12 @@
 
 [![](https://jitpack.io/v/susanaluis877-ship-it/apex.svg)](https://jitpack.io/#susanaluis877-ship-it/apex)
 
-基于 Android 无障碍服务的自动化点击框架。用**状态图**描述流程：每个状态说明“这是哪个页面”“在这个页面做什么”“接下来应该出现哪个页面”，再用全局**拦截器**处理弹窗、广告这类意外页面。
+基于 Android 无障碍服务的自动化点击框架。用**状态图**描述流程：每个状态说明“这是哪个页面”“在这个页面做什么”“接下来应该出现哪个页面”，全局**拦截器**负责弹窗、广告这类意外页面。
 
-- 纯 Java，无任何三方依赖，minSdk 24
-- 流程既可以用 Java DSL 写，也可以用 JSON 写（可远程下发），两者产出同一个模型
-- 支持节点点击、坐标点击/滑动（手势）、滚动、输入文本、返回/Home、启动 App、自定义动作
-- 纯 Java 的引擎和匹配逻辑，可以在 JVM 上完整单测
+- 纯 Java，无三方依赖，minSdk 24
+- 流程可以用 Java DSL 写，也可以用 JSON 写（方便远程下发）
+- 支持节点点击、坐标点击和滑动、滚动、输入文本、返回/Home、启动 App，也可以用代码写条件和动作
+- 每次运行都有完整的运行轨迹，失败时能看到每一步做了什么、卡在哪里
 
 ## 接入
 
@@ -27,11 +27,11 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.3.1")
+    implementation("com.github.susanaluis877-ship-it:apex:0.3.2")
 }
 ```
 
-无障碍服务 `ApexAccessibilityService` 会随 AAR 自动合并进宿主的 manifest，宿主不需要再声明。
+无障碍服务会随 AAR 自动合并进宿主的 manifest，不需要再声明。
 
 ## 快速开始
 
@@ -67,156 +67,146 @@ RunHandle handle = Apex.run(flow, result -> Log.i("Apex", "finished: " + result)
 // handle.cancel();
 ```
 
-`Match.*`、`Actions.*` 建议静态导入。`FlowListener` 还有 `onStateEntered` 和 `onInterceptor` 两个可选回调。
+`Match.*`、`Actions.*` 建议静态导入。`FlowListener` 除了 `onFinished`，还有可选的 `onStateEntered` 和 `onInterceptor`。同一时间只能运行一个流程。
 
-## 核心概念
+## 定义流程
 
-### 状态
+### 状态与拦截器
 
-| 字段 | 说明 |
+| 状态字段 | 说明 |
 |---|---|
 | `match` | 页面匹配条件，判断“当前是不是这个页面” |
 | `actions` | 进入状态后依次执行的动作 |
-| `next` | 有序的候选下一状态。引擎按顺序检查候选状态的 `match`，第一个匹配的就是下一状态 |
-| `end` | `success` 或 `failure`，表示终止状态：执行完动作后结束流程，不能有 `next` |
-| `timeoutMs` | 进入状态后等待下一状态出现的最长时间；对起始状态是等它出现的最长时间 |
-| `retryIntervalMs` / `maxRetries` | 页面毫无变化时，多久后重跑一次动作、最多几次 |
+| `next` | 有序的候选下一状态。按顺序检查它们的 `match`，第一个匹配的就是下一状态 |
+| `end` | `success` 或 `failure`：执行完动作后结束流程，不能再有 `next` |
+| `timeoutMs` | 等待下一状态出现的最长时间；对起始状态是等它出现的最长时间 |
+| `retryIntervalMs` / `maxRetries` | 页面毫无变化时，多久后重跑动作、最多几次 |
 
-同一个页面需要走不同分支时，就拆成多个 `match` 互斥的状态，例如上面的 `task` 和 `sold_out`。
+同一个页面要走不同分支时，拆成多个 `match` 互斥的状态，例如上面的 `task` 和 `sold_out`。
 
-### 拦截器
+**拦截器是全局的。** 任何时候屏幕匹配它的条件，就先执行它的动作，再回到被打断的地方继续，不会让当前状态的动作重跑。
 
-拦截器是全局的：任何时候屏幕匹配它的条件，就先执行它的动作，然后回到被打断的地方继续。它不会让当前状态的动作重跑一遍。
+- 每一轮先检查拦截器、再检查状态，所以弹窗挡住页面时不会先点到下面的按钮。
+- 如果某个弹窗本身就是流程的一步，在拦截器的条件里用 `not(...)` 把它排除掉。
+- `maxTimes`（默认 5）是一次运行里最多触发几次。
+- `cooldownMs`（默认 1500）是两次触发的最短间隔；冷却期间弹窗还在的话，引擎会先等着。
+- 可以定义多个拦截器，按声明顺序检查，每一轮最多触发一个。条件更具体的放前面。
 
-- 每一轮先检查拦截器，再检查候选状态，所以弹窗挡住页面时不会先点到下面的按钮。
-- 如果某个弹窗本身就是流程的一步，在拦截器条件里用 `not(...)` 把它排除掉。
-- `maxTimes`（默认 5）：一次运行中最多触发几次。用完后这个拦截器就不再检查。
-- `cooldownMs`（默认 1500）：两次触发之间的最短间隔。冷却期间这个弹窗如果还在，引擎这一轮什么都不做，以免在关闭动画期间点到下面。
-
-### 引擎每一轮做什么
-
-1. 等界面安静：收到无障碍事件后等 200 ms 没有新事件；没有事件时每 500 ms 主动检查一次。
-2. 抓取所有应用窗口的节点快照，包括 Activity、Dialog 和 PopupWindow。
-3. 有匹配的拦截器就执行它，然后进入下一轮。
-4. 候选状态有匹配的，就进入该状态并执行它的动作。
-5. 都没有进展时：
-   - 当前状态有动作软失败（例如目标还没出现），从失败的那个动作接着执行。
-   - 页面在 `retryIntervalMs` 内毫无变化，重跑当前状态的动作，最多 `maxRetries` 次。页面有任何变化（例如正在加载）都不会重试。
-   - 当前状态和候选状态都不匹配（过渡页、动画），只等待。
-6. 超过状态超时时间，以 `TIMEOUT` 结束。结果的 `message` 里带当时的包名、Activity 和页面上的文本，方便排查。
-
-动作不能重复执行时（例如下单），把这个状态的 `maxRetries` 设为 0。
-
-### 运行结果
-
-`RunResult.getStatus()` 的取值：
-
-| 状态 | 含义 |
-|---|---|
-| `SUCCESS` / `FAILURE` | 到达 `end: success` / `end: failure` 的终止状态 |
-| `TIMEOUT` | 起始状态没出现、下一状态没出现，或整个流程超时（`timeoutMs`，默认 5 分钟） |
-| `MAX_STEPS` | 进入状态的次数超过 `maxSteps`（默认 100），通常是状态之间来回跳转 |
-| `ACTION_FAILED` | 动作无法执行，例如没有启动 intent、目标不是输入框 |
-| `CANCELLED` | 调用了 `RunHandle.cancel()` |
-| `SERVICE_UNAVAILABLE` | 服务未连接，或运行中断开超过 3 秒 |
-| `BUSY` / `NOT_INITIALIZED` / `INVALID_ARGUMENT` | 没能开始运行 |
-| `ERROR` | 自定义动作或条件抛出了异常 |
-
-除此之外还有 `getPath()`（依次进入的状态）、`getInterceptorCounts()`、`getDurationMs()`、`getMessage()`，以及下面的运行轨迹。
-
-### 日志与运行轨迹
-
-每次运行的每一步都会记成一条 `TraceEvent`：
-
-| 类型 | 记录内容 |
-|---|---|
-| `RUN_START` / `RUN_END` | 流程概况；结束状态、耗时、路径、拦截器次数和原因 |
-| `STATE_ENTER` | 进入哪个状态、第几步、当时的屏幕概况 |
-| `ACTION` | 哪个状态的第几个动作、点了哪个节点、用的节点动作还是手势、坐标、结果和耗时 |
-| `INTERCEPTOR` | 拦截器触发第几次；匹配但还在冷却时也会记录 |
-| `WAIT` | 在等哪些状态，以及每个候选状态为什么还没匹配。页面有变化时记一次，页面不变时每 5 秒记一次 |
-| `RETRY` / `RESUME` | 为什么重试（页面多久没变化）、从第几个动作续跑、上次失败的原因 |
-| `SERVICE` / `SNAPSHOT` | 服务断开或恢复；快照超出上限被跳过 |
-| `SCREEN_DUMP` | 没有成功结束（超时、动作失败、步数超限、服务断开、出错）时最后一屏的节点树 |
-
-轨迹会完整记录在 `RunResult` 里，不受日志级别影响；最多 1000 条，超出时保留开头和最近的记录。`formatTrace()` 可以把它格式化成文本上报：
-
-```
-run demo.claim#3 TIMEOUT in 10.200s, path=[home]
-+0.000s RUN_START   flow demo.claim: start 'home', states [home, task, done, sold_out], interceptors [close_ad], ...
-+0.000s STATE_ENTER home (step 1) on screen seq=2 pkg=com.foo activity=HomeActivity windows=1 nodes=12
-+0.000s ACTION      home 1/1 click{id="demo_start"} -> OK in 12ms: ACTION_CLICK on Button id=com.foo:id/demo_start ...
-+0.200s WAIT        next of 'home' [task, sold_out] (0.200s/10.000s, retries 0/2); left 'home' (...);
-                    task: has{id="demo_claim", enabled=true}: 1 node(s) match all but enabled=true, e.g. Button ... (enabled=false);
-                    sold_out: has{text="Sold out"}: no node matches (text="Sold out": 0 node(s))
-+10.200s SCREEN_DUMP last screen: ...
-+10.200s RUN_END     TIMEOUT at 'home' in 10.200s, ...
-```
-
-同样的内容也会输出到日志，每一行带 `[flowId#运行编号 +耗时]` 前缀，方便在 logcat 里按一次运行过滤。日志的级别和去向可以在 `ApexConfig` 里设置：
+**全局拦截器。** 每个流程都要处理的弹窗（权限、升级提示、广告），注册一次就对所有流程生效：
 
 ```java
-Apex.init(this, new ApexConfig.Builder()
-        .setDebug(BuildConfig.DEBUG)          // debug 时默认 DEBUG 级，否则只输出 WARN 及以上
-        .setLogLevel(ApexLogger.VERBOSE)      // 可选：VERBOSE 会额外输出每一轮的快照概况
-        .setLogger((priority, tag, message, throwable) -> {
-            // 接管 SDK 的所有日志：写文件、接 Timber、上报都可以。需要保留 logcat 时再转给 ApexLogger.LOGCAT
-            ApexLogger.LOGCAT.log(priority, tag, message, throwable);
-        })
-        .build());
+Apex.addGlobalInterceptor("close_ad", i -> i
+        .match(has(By.id("iv_close_ad")))
+        .action(click(By.id("iv_close_ad"))));
 ```
 
-| 级别 | 内容 |
+- 排在流程自己的拦截器之后，按注册顺序检查。
+- 流程里有同 id 的拦截器时，这个流程用自己的版本。
+- 某个弹窗正好是流程的一步时，用 `.excludeGlobalInterceptors("close_ad")` 排除；`.useGlobalInterceptors(false)` 则完全不用全局拦截器。
+- 每次运行开始时取一次当前的全局拦截器，运行中途增删不影响这次运行。
+- 没设置的 `maxTimes`、`cooldownMs` 用默认值，不受流程 `defaults` 影响。
+- 同 id 再注册会替换原来的；用 `removeGlobalInterceptor(id)` / `clearGlobalInterceptors()` 移除。
+- 定义写错时，注册时就会抛出异常；引用的自定义条件要先注册。
+
+**动作什么时候执行：**
+
+- **进入状态时执行一次。**
+- **某个动作软失败时续跑。** 软失败是指目标还没出现，或者用代码写的动作返回了 false。之后页面一有变化，或者页面不变但过了 `retryIntervalMs`，就从这个动作接着执行。
+- **页面毫无变化时重跑。** 页面在 `retryIntervalMs` 内一点没变，就重跑全部动作，最多 `maxRetries` 次。页面一直在变（例如正在加载）时不会重跑。不能重复执行的动作（例如下单）要设 `maxRetries(0)`。
+- **其他情况只等待。** 当前状态和候选状态都不匹配时（过渡页、动画），一直等到超时。
+
+### 流程级设置
+
+| 设置 | 默认值 | DSL | 说明 |
+|---|---|---|---|
+| `timeoutMs` | 5 分钟 | `Flow.Builder.timeoutMs(...)` | 整个流程的超时 |
+| `maxSteps` | 100 | `.maxSteps(...)` | 最多进入状态的次数，防止来回跳转 |
+| `maxInterceptions` | 30 | `.maxInterceptions(...)` | 所有拦截器合计最多触发几次 |
+| `defaults.timeoutMs` | 10 秒 | `.defaults(d -> d.timeoutMs(...))` | 状态超时 |
+| `defaults.retryIntervalMs` | 3 秒 | `.defaults(d -> d.retryIntervalMs(...))` | 页面无变化多久后重跑 |
+| `defaults.maxRetries` | 2 | `.defaults(d -> d.maxRetries(...))` | 最多重跑几次 |
+| `defaults.actionGapMs` | 300 ms | `.defaults(d -> d.actionGapMs(...))` | 同一状态内相邻动作的间隔 |
+| `defaults.interceptorMaxTimes` | 5 | `.defaults(d -> d.interceptorMaxTimes(...))` | 拦截器默认 `maxTimes` |
+| `defaults.interceptorCooldownMs` | 1.5 秒 | `.defaults(d -> d.interceptorCooldownMs(...))` | 拦截器默认 `cooldownMs` |
+| `useGlobalInterceptors` | true | `.useGlobalInterceptors(...)` | 是否使用全局拦截器 |
+| `excludeGlobalInterceptors` | 无 | `.excludeGlobalInterceptors("id", ...)` | 不使用的全局拦截器 |
+
+状态可以单独设置 `timeoutMs`、`retryIntervalMs`、`maxRetries`，拦截器可以单独设置 `maxTimes`、`cooldownMs`。
+
+### 页面条件 `match`
+
+同一个对象里的多个键是 AND 关系。
+
+| JSON 键 | DSL | 说明 |
+|---|---|---|
+| `package` | `pkg("com.foo")` | 最上层应用窗口的包名 |
+| `activity` | `activity(".ui.HomeActivity")` | Activity 类名，可写全名、`.` 开头的后缀或简单类名。页面刚切换时可能更新得稍晚，单 Activity、Compose、Flutter 应用里也不区分页面，所以只当辅助条件 |
+| `has` | `has(selector...)` | 存在匹配的节点；写多个时要求每个都存在 |
+| `not` | `not(matcher)` | |
+| `allOf` / `anyOf` | `allOf(...)` / `anyOf(...)` | |
+| `always` | `always()` | 任何屏幕都匹配，JSON 里写 `true` |
+| `custom` | `custom(screen -> ...)` / `Match.custom("名字")` | 用代码写的条件，见下文 |
+
+### 节点选择器
+
+同一个对象里的多个键也是 AND 关系，DSL 写成 `By.xxx(...).yyy(...)`。
+
+| 键 | 说明 |
 |---|---|
-| ERROR | 动作硬失败、自定义代码抛异常、流程以 ERROR 结束 |
-| WARN | 超时、步数超限、服务断开、快照被跳过 |
-| INFO | 流程开始和结束、进入状态、拦截器触发、重试 |
-| DEBUG | 每个动作的细节、等待原因、续跑、拦截器冷却、失败时的节点树 |
-| VERBOSE | 每一轮的快照概况和抓取耗时（只进日志，不进轨迹） |
+| `text` / `textContains` / `textMatches` | 文本完全相等 / 包含 / 整段匹配正则 |
+| `desc` / `descContains` / `descMatches` | contentDescription，规则同上 |
+| `id` | 短名 `submit` 匹配任意包下的 `:id/submit`，全名 `com.foo:id/submit` 精确匹配 |
+| `className` | 简单类名 `Button` 或全名 `android.widget.Button` |
+| `clickable` / `enabled` / `checked` / `selected` / `scrollable` | 状态过滤 |
+| `visible` | 默认只匹配用户可见的节点；设为 `false` 时可见和不可见的都匹配 |
 
-日志接收器可能在任意线程调用，需要线程安全且尽快返回。
+有多个节点匹配时取第一个，顺序是窗口从上到下、窗口内先序遍历。
 
-编写或调试选择器时，也可以直接问它为什么没匹配：
+### 动作
 
-```java
-String why = By.id("demo_claim").enabled(true).explainMismatch(screen);
-// "1 node(s) match all but enabled=true, e.g. Button id=...:id/demo_claim ... (enabled=false)"
-String why2 = Match.allOf(pkg("com.foo"), has(By.text("领取"))).explainMismatch(screen);  // 匹配时返回 null
-```
+| JSON `type` | 参数 | DSL |
+|---|---|---|
+| `click` / `longClick` | `target`，`mode`：`auto`（默认）、`node`、`gesture` | `click(By...)` / `longClick(By...)` |
+| `tap` | `x`、`y`，或 `xRatio`、`yRatio`（0~1），可选 `durationMs` | `tap(x, y)` / `tapRatio(0.5, 0.9)` |
+| `swipe` | `from`、`to`（`[x, y]`），或 `fromRatio`、`toRatio`，可选 `durationMs` | `swipe(...)` / `swipeRatio(...)` |
+| `scroll` | `direction`：`forward`、`backward`、`up`、`down`、`left`、`right`，可选 `target` | `scroll(direction)` / `scroll(By..., direction)` |
+| `setText` | `target`、`text` | `setText(By..., "text")` |
+| `back` / `home` / `recents` / `notifications` | 无 | `back()` 等 |
+| `launchApp` | `package` | `launchApp("com.foo")` |
+| `sleep` | `ms` | `sleep(1000)` |
+| `custom` | `name`、可选 `args` | `run(ctx -> ...)` / `Actions.custom("名字")`，见下文 |
 
-## JSON 格式
+所有动作都支持两个参数：
 
-下面的 JSON 与 demo 里 `DemoFlows.dsl()` 定义的流程完全等价：
+- `optional: true`，DSL 写 `.optional()`：失败时跳过，继续下一个动作。
+- `delayMs`，DSL 写 `.delayMs(ms)`：执行前先等一会儿。
+
+`click` 的 `auto` 模式先对目标或它最近的可点击祖先执行节点点击，不成功再按节点中心坐标点击。自绘 View、WebView、Flutter 页面建议直接用 `gesture` 模式。
+
+### 用 JSON 定义
+
+上面快速开始的流程写成 JSON 是这样的，两种写法得到的流程完全相同：
 
 ```json
 {
-  "schema": 1,
-  "id": "demo.claim",
+  "id": "claim",
   "start": "home",
-  "timeoutMs": 60000,
-  "maxSteps": 20,
-  "defaults": { "timeoutMs": 10000, "retryIntervalMs": 3000, "maxRetries": 2 },
   "states": [
-    { "id": "home",
-      "match": { "package": "com.github.susanaluis877.apex.demo", "has": { "id": "demo_start" } },
-      "actions": [ { "type": "click", "target": { "id": "demo_start" } } ],
-      "next": ["task", "sold_out"] },
-    { "id": "task",
-      "match": { "has": { "id": "demo_claim", "enabled": true } },
-      "actions": [ { "type": "click", "target": { "id": "demo_claim" } } ],
-      "next": "done", "timeoutMs": 15000 },
-    { "id": "done", "match": { "has": { "textContains": "Reward claimed" } }, "end": "success" },
-    { "id": "sold_out", "match": { "has": { "text": "Sold out" } },
-      "actions": [ { "type": "back" } ], "end": "failure" }
+    { "id": "home", "match": { "package": "com.foo", "has": { "id": "tab_task" } },
+      "actions": [ { "type": "click", "target": { "id": "tab_task" } } ], "next": ["task", "sold_out"] },
+    { "id": "task", "match": { "has": { "text": "领取奖励", "enabled": true } },
+      "actions": [ { "type": "click", "target": { "text": "领取奖励" } } ], "next": "done" },
+    { "id": "done", "match": { "has": { "textContains": "领取成功" } }, "end": "success" },
+    { "id": "sold_out", "match": { "has": { "text": "已抢光" } }, "actions": [ { "type": "back" } ], "end": "failure" }
   ],
   "interceptors": [
-    { "id": "close_ad",
-      "match": { "has": [ { "text": "AD" }, { "id": "demo_ad_close", "clickable": true } ] },
-      "actions": [ { "type": "click", "target": { "id": "demo_ad_close" } } ],
-      "maxTimes": 3 }
+    { "id": "close_ad", "match": { "has": { "id": "iv_close_ad" } },
+      "actions": [ { "type": "click", "target": { "id": "iv_close_ad" } } ] }
   ]
 }
 ```
+
+顶层还可以写上面“流程级设置”里的各项（`defaults` 是一个对象）；状态和拦截器里可以写各自的超时、重试次数。更完整的例子见 `demo/src/main/assets/demo_flow.json`。
 
 ```java
 try {
@@ -228,252 +218,192 @@ try {
 
 解析规则：
 
-- 任何层级出现未知的键都会报错，用来发现拼写错误。
+- 任何位置出现未知的键都会报错，用来发现拼写错误。
 - 值为 `null` 的键视为没写。
-- 校验与 `Flow.Builder.build()` 完全相同，报错时指出 JSON 路径。
+- 流程写错时，`Flow.Builder.build()` 和 `FlowParser.parse()` 都会指出具体位置。
 
-### 顶层与默认值
+## 用代码写条件和动作
 
-| 键 | 默认值 | 说明 |
-|---|---|---|
-| `id`、`start`、`states` | 必填 | |
-| `timeoutMs` | 300000 | 整个流程的超时 |
-| `maxSteps` | 100 | 最多进入状态的次数 |
-| `maxInterceptions` | 30 | 所有拦截器合计最多触发几次 |
-| `interceptors` | 无 | |
-| `defaults.timeoutMs` | 10000 | 状态超时 |
-| `defaults.retryIntervalMs` | 3000 | 页面无变化多久后重试 |
-| `defaults.maxRetries` | 2 | 最多重试几次 |
-| `defaults.actionGapMs` | 300 | 同一状态内相邻动作的间隔 |
-| `defaults.interceptorMaxTimes` | 5 | 拦截器默认最多触发几次 |
-| `defaults.interceptorCooldownMs` | 1500 | 拦截器默认冷却时间 |
-
-状态可以单独写 `timeoutMs`、`retryIntervalMs`、`maxRetries` 覆盖默认值；拦截器可以单独写 `maxTimes`、`cooldownMs`。
-
-### 页面条件 `match`
-
-同一个对象里的多个键是 AND 关系。
-
-| 键 | DSL | 说明 |
-|---|---|---|
-| `package` | `pkg("com.foo")` | 最上层应用窗口的包名 |
-| `activity` | `activity(".ui.HomeActivity")` | Activity 类名，可写全名、`.` 开头的后缀或简单类名。它来自无障碍事件，页面刚切换时可能比节点内容晚一点更新；单 Activity、Compose、Flutter 应用里它也不区分页面。所以只当辅助条件，判断页面优先用 `has` |
-| `has` | `has(selector...)` | 存在匹配的节点；写数组时要求每个都存在 |
-| `not` | `not(matcher)` | |
-| `allOf` / `anyOf` | `allOf(...)` / `anyOf(...)` | 子条件数组 |
-| `always` | `always()` | 只能写 `true`，任何屏幕都匹配 |
-| `custom` | `Match.custom(name, args)` | 引用注册过的条件：`"名字"` 或 `{"name": ..., "args": {...}}`。DSL 里还可以直接传函数 `custom(screen -> ...)`，见下文 |
-
-### 节点选择器 selector
-
-同一个对象里的多个键也是 AND 关系，DSL 用 `By.xxx(...).yyy(...)`。
-
-| 键 | 说明 |
-|---|---|
-| `text` / `textContains` / `textMatches` | 文本完全相等 / 包含 / 整段匹配正则 |
-| `desc` / `descContains` / `descMatches` | contentDescription，规则同上 |
-| `id` | 写短名 `submit` 匹配任意包下的 `:id/submit`，写全名 `com.foo:id/submit` 时精确匹配 |
-| `className` | 简单类名 `Button` 或全名 `android.widget.Button` |
-| `clickable` / `enabled` / `checked` / `selected` / `scrollable` | 布尔过滤 |
-| `visible` | 默认 `true`，只匹配用户可见的节点；写 `false` 时可见和不可见都匹配 |
-
-有多个节点匹配时取第一个，顺序是：窗口从上到下，窗口内先序遍历。
-
-### 动作 `actions`
-
-| `type` | 参数 | DSL |
-|---|---|---|
-| `click` / `longClick` | `target`，`mode`：`auto`（默认）、`node`、`gesture` | `click(By...)` / `longClick(By...)` |
-| `tap` | `x`、`y` 或 `xRatio`、`yRatio`（0~1），可选 `durationMs` | `tap(x, y)` / `tapRatio(0.5, 0.9)` |
-| `swipe` | `from`、`to`（`[x, y]`）或 `fromRatio`、`toRatio`，可选 `durationMs` | `swipe(...)` / `swipeRatio(...)` |
-| `scroll` | `direction`：`forward`/`backward`/`up`/`down`/`left`/`right`，可选 `target` | `scroll(direction)` / `scroll(By..., direction)` |
-| `setText` | `target`、`text` | `setText(By..., "text")` |
-| `back` / `home` / `recents` / `notifications` | 无 | `back()` 等 |
-| `launchApp` | `package` | `launchApp("com.foo")` |
-| `sleep` | `ms` | `sleep(1000)` |
-| `custom` | `name`、可选 `args` | `custom(name, args)`；DSL 里还可以直接传函数 `run(ctx -> ...)`，见下文 |
-
-所有动作都可以加两个参数：
-
-- `optional: true`（DSL `.optional()`）：失败时跳过，继续下一个动作。
-- `delayMs`（DSL `.delayMs(ms)`）：执行前先等待。
-
-`click` 的 `auto` 模式会先对目标节点或它最近的可点击祖先执行 `ACTION_CLICK`，不成功再按节点中心坐标手势点击。自绘 View、WebView、Flutter 页面上建议直接用 `mode: gesture`。
-
-## 自定义动作和条件
-
-### 用代码写匹配条件
-
-内置条件不够用时，可以把一个函数直接传给 `custom(...)`。函数拿到整个屏幕快照 `ScreenSnapshot`，返回 true 表示匹配：
+内置的条件和动作不够用时，可以直接传函数：
 
 ```java
-.state("task", s -> s
+.state("withdraw", s -> s
+        // 条件：拿到整个屏幕快照，返回 true 表示匹配
         .match(custom(screen -> {
-            // 余额 >= 100 才去提现
             UiNode balance = By.id("tv_balance").findFirst(screen);
-            if (balance == null || balance.getText() == null) {
-                return false;
-            }
-            String digits = balance.getText().replaceAll("[^0-9]", "");
+            String digits = balance == null || balance.getText() == null
+                    ? "" : balance.getText().replaceAll("[^0-9]", "");
             return !digits.isEmpty() && Long.parseLong(digits) >= 100;
         }))
-        .action(click(By.text("提现")))
-        .next("done"))
-```
-
-- **能用的信息。** 快照提供 `getPackageName()`、`getActivity()`、`getWindows()`（从上到下）、`nodes()`（全部节点）、`getScreenWidth()`/`getScreenHeight()`。节点 `UiNode` 提供文本、id、位置、状态，以及 `getParent()`/`getChildren()`，可以按父子关系判断。`By.xxx(...).findFirst(screen)` / `findAll(screen)` 可以在快照里查找节点。
-- **可以组合。** 它和其他条件一样，例如 `allOf(pkg("com.foo"), custom(screen -> ...))`，也可以用在拦截器的 `match` 上。
-- **运行环境。** 函数在引擎线程上执行，每一轮可能调用多次。不要在里面做耗时操作或修改界面；抛出异常时流程以 `ERROR` 结束。
-- **只能在 DSL 里用。** JSON 没法写函数，JSON 流程要用下面按名字注册的方式。
-
-### 用代码写动作
-
-内置动作不够用时，可以把一个函数传给 `run(...)`。函数拿到 `ActionContext`，返回 true 表示成功：
-
-```java
-.state("coupons", s -> s
-        .match(has(By.text("领券中心")))
+        // 动作：拿到 ActionContext，返回 true 表示成功
         .action(run(ctx -> {
-            // 依次点掉页面上所有“领取”按钮
             for (UiNode node : By.text("领取").findAll(ctx.screen())) {
                 if (ctx.isCancelled() || !ctx.click(node)) {
                     return false;
                 }
                 ctx.sleep(300);
             }
-            ctx.refresh();
-            return By.text("领取").findFirst(ctx.screen()) == null;
+            return true;
         }))
         .next("done"))
 ```
 
-`ActionContext` 提供这些方法：
+**条件函数能用到的信息：**
+
+- 快照 `ScreenSnapshot` 提供包名、Activity、窗口（从上到下）、全部节点 `nodes()` 和屏幕尺寸。
+- 节点 `UiNode` 提供文本、id、位置、状态，以及 `getParent()` / `getChildren()`。
+- `By...findFirst(screen)` / `findAll(screen)` 可以在快照里找节点。
+
+条件可以和其他条件组合，例如 `allOf(pkg("com.foo"), custom(...))`，也可以用在拦截器上。
+
+**`ActionContext` 的方法：**
 
 | 方法 | 作用 |
 |---|---|
 | `screen()` | 当前快照 |
-| `refresh()` | 重新抓一次快照，之后 `screen()` 返回新的 |
-| `click(node)` | 点击节点：先用节点动作，不行再用手势 |
-| `perform(action)` | 执行任意内置动作，例如 `ctx.perform(swipeRatio(0.5, 0.8, 0.5, 0.2))` |
-| `sleep(ms)` | 等待，流程被取消时提前返回 |
-| `isCancelled()` | 流程是否已被取消 |
+| `refresh()` | 重新抓一次快照 |
+| `click(node)` | 点击节点 |
+| `perform(action)` | 执行内置动作，例如 `ctx.perform(swipeRatio(0.5, 0.8, 0.5, 0.2))` |
+| `sleep(ms)` | 等待，流程取消时提前返回 |
+| `isCancelled()` | 流程是否已取消 |
 
-几点说明：
+**规则：**
 
-- **返回值。** 返回 false 是软失败：引擎会在页面变化后，或页面不变时过了重试间隔，从这个动作开始续跑。抛出异常时流程以 `ERROR` 结束。
-- **运行环境。** 函数在引擎线程上同步执行，可以阻塞，但循环里要检查 `isCancelled()`。
-- **轨迹。** 函数里通过 `click`、`perform` 做的每个操作都会记进运行轨迹。
-- **不能嵌套。** `run(...)` 和 `custom(...)` 不能在函数里再通过 `perform` 执行。
-- **只能在 DSL 里用。** JSON 流程要用下面按名字注册的方式。
-- **方法名冲突。** 如果构建流程的那个类自己有 `run` 方法（例如实现了 `Runnable`），它会盖住静态导入的 `run`，这时要写成 `Actions.run(...)`。
+- **执行线程。** 函数在引擎线程上同步执行。条件函数每一轮可能调用多次，不要做耗时操作；动作函数可以阻塞，但循环里要检查 `isCancelled()`。
+- **返回值和异常。** 动作返回 false 算软失败，引擎会按上面的规则续跑；函数抛异常时，流程以 `ERROR` 结束。
+- **嵌套。** 动作函数里不能再用 `perform` 执行另一个 `run(...)` 或 `custom(...)`。
+- **方法名冲突。** 构建流程的类如果自己有 `run` 方法（例如实现了 `Runnable`），要写成 `Actions.run(...)`。
 
-### 按名字注册
-
-需要在 JSON 里引用，或者要在多个流程里复用时，按名字注册。必须先注册，再构建或解析引用它们的流程：
+**JSON 流程或要复用时，按名字注册。** 必须先注册，再构建或解析引用它们的流程。注册的版本还能拿到流程里写的 `args`：
 
 ```java
-Apex.registerMatcher("hasBadge", (screen, args) ->
-        By.textMatches("\\d+").findFirst(screen) != null);
-
-Apex.registerAction("tapAllCoupons", (ctx, args) -> {
-    for (UiNode node : By.text("领取").findAll(ctx.screen())) {
-        if (ctx.isCancelled()) {
-            return false;
-        }
-        ctx.click(node);
-        ctx.sleep(300);
-    }
-    return true;  // false 表示软失败，引擎会按重试规则稍后再试
-});
+Apex.registerMatcher("hasBadge", (screen, args) -> By.textMatches("\\d+").findFirst(screen) != null);
+Apex.registerAction("tapAll", (ctx, args) -> { /* 同上 */ return true; });
 ```
 
-注册的条件和动作，与上面直接传函数的写法遵循同样的规则：返回值、异常、`ActionContext` 都一样。
+JSON 里写 `{"custom": "hasBadge"}` 和 `{"type": "custom", "name": "tapAll", "args": {...}}`。在 DSL 里，因为 `Match` 和 `Actions` 都有 `custom("名字")`，两个类都静态导入时要写全：`Match.custom("hasBadge")` / `Actions.custom("tapAll")`。
 
-`Match.custom` 和 `Actions.custom` 都有接收名字的版本。两个类都静态导入时，`custom("名字")` 有歧义，要写成 `Match.custom("名字")` 或 `Actions.custom("名字")`。
+## 运行结果与排查
 
-## 编写选择器
+| `RunResult.getStatus()` | 含义 |
+|---|---|
+| `SUCCESS` / `FAILURE` | 到达 `end: success` / `end: failure` 的状态 |
+| `TIMEOUT` | 起始状态或下一状态没出现，或整个流程超时 |
+| `MAX_STEPS` | 进入状态的次数超过 `maxSteps` |
+| `ACTION_FAILED` | 动作无法执行，例如找不到要启动的 App、目标不是输入框 |
+| `CANCELLED` | 调用了 `RunHandle.cancel()` |
+| `SERVICE_UNAVAILABLE` | 服务没连接，或运行中断开超过 3 秒 |
+| `BUSY` / `NOT_INITIALIZED` / `INVALID_ARGUMENT` | 没能开始运行 |
+| `ERROR` | 自定义的条件或动作抛出了异常 |
 
-在目标页面上调用 `Apex.dumpScreen(...)` 可以拿到节点树。debug 模式下它也会输出到 logcat，tag 为 `Apex`：
+结果里还有 `getPath()`（依次进入的状态）、`getInterceptorCounts()`、`getDurationMs()`、`getMessage()`（失败原因）。
+
+**运行轨迹。** 每次运行的每一步都会记录在 `getTrace()` 里，不受日志级别影响：
+
+- 进入了哪个状态。
+- 每个动作点了哪个节点、用什么方式、结果和耗时。
+- 拦截器触发、重试和续跑。
+- 等待时，每个候选状态为什么还没匹配。
+- 失败时，最后一屏的节点树。
+
+`formatTrace()` 可以把这些格式化成文本，方便上报：
 
 ```
-screen seq=12 pkg=com.foo activity=com.foo.ui.HomeActivity size=1080x2400
-[window 0] layer=21 active
-  FrameLayout [0,0][1080,2400]
-    Button id=com.foo:id/tab_task text="任务" [100,2200][300,2400] clickable
+run demo.claim#3 TIMEOUT in 10.200s, path=[home]
++0.000s STATE_ENTER home (step 1) on screen seq=2 pkg=com.foo activity=HomeActivity windows=1 nodes=12
++0.000s ACTION      home 1/1 click{id="demo_start"} -> OK in 12ms: ACTION_CLICK on Button id=com.foo:id/demo_start ...
++0.200s WAIT        next of 'home' [task, sold_out] (0.200s/10.000s, retries 0/2); left 'home' (...);
+                    task: has{id="demo_claim", enabled=true}: 1 node(s) match all but enabled=true, e.g. Button ... (enabled=false);
+                    sold_out: has{text="Sold out"}: no node matches (text="Sold out": 0 node(s))
++10.200s SCREEN_DUMP last screen: ...
++10.200s RUN_END     TIMEOUT at 'home' in 10.200s, ...
 ```
 
-## 宿主配置与注意事项
+**日志。** 同样的内容也会输出到日志，每行带 `[流程id#运行编号 +耗时]` 前缀，tag 为 `Apex`。日志级别和去向在初始化时设置：
 
-- **自定义服务名称。** 宿主可以用同名资源覆盖 `apex_accessibility_label` 和 `apex_accessibility_description`，demo 里有例子。
-- **不需要无障碍服务时移除它：**
+```java
+Apex.init(this, new ApexConfig.Builder()
+        .setDebug(BuildConfig.DEBUG)       // debug 时默认 DEBUG 级，否则只输出 WARN 及以上
+        .setLogLevel(ApexLogger.VERBOSE)   // 可选：VERBOSE 会额外输出每一轮的快照概况
+        .setLogger((priority, tag, message, throwable) -> {
+            // 接管所有日志：写文件、接 Timber、上报。要保留 logcat 就再转给 ApexLogger.LOGCAT
+            ApexLogger.LOGCAT.log(priority, tag, message, throwable);
+        })
+        .build());
+```
+
+各级别的内容：
+
+- ERROR：动作无法执行、代码抛异常。
+- WARN：超时、服务断开。
+- INFO：开始、结束、进入状态、拦截器触发、重试。
+- DEBUG：每个动作的细节、等待原因。
+
+日志接收器可能在任意线程调用，要线程安全并尽快返回。
+
+**编写选择器。**
+
+- `Apex.dumpScreen((snapshot, text) -> ...)` 可以拿到当前页面的节点树（id、文本、位置、状态），debug 模式下也会输出到 logcat。
+- 选择器或条件没匹配上时，可以直接问原因：
+
+```java
+By.id("demo_claim").enabled(true).explainMismatch(screen);
+// "1 node(s) match all but enabled=true, e.g. Button id=...:id/demo_claim ... (enabled=false)"，匹配时返回 null
+```
+
+## 注意事项
+
+- **自定义服务名称。** 用同名资源覆盖 `apex_accessibility_label` 和 `apex_accessibility_description`，demo 里有例子。
+- **不需要无障碍服务时，移除它：**
   ```xml
   <service
       android:name="com.github.susanaluis877.apex.service.ApexAccessibilityService"
       tools:node="remove" />
   ```
-- **启动其他 App。** Android 11 及以上，宿主需要在 manifest 里声明要启动的包，否则 `launchApp` 会以 `ACTION_FAILED` 结束：
+- **启动其他 App。** Android 11 及以上，要在 manifest 里声明目标包，否则 `launchApp` 会失败：
   ```xml
   <queries>
       <package android:name="com.foo" />
   </queries>
   ```
-- **服务类名不能改。** 类名 `com.github.susanaluis877.apex.service.ApexAccessibilityService` 会保存在系统设置里，改名会让已开启的服务失效。
-- **上架 Google Play。** Google Play 对无障碍 API 的使用有专门政策：需要在 Play Console 里声明用途，并在应用内做显著披露。自动操作其他 App 是常见的拒审原因。
-- **系统限制：**
-  - Android 13 及以上，非应用商店安装的 App 要先在应用信息里“允许受限设置”，才能开启无障碍服务。`adb install` 不受影响。
-  - 很多机型上强制停止 App 后，服务会从已开启列表里移除。
-  - Android 14 及以上，标记为 `accessibilityDataSensitive` 的控件对非辅助工具类服务不可见。
+- **上架 Google Play。** 使用无障碍 API 需要在 Play Console 里声明用途，并在应用内做显著披露。自动操作其他 App 是常见的拒审原因。
+- **开启服务的系统限制：**
+  - Android 13 及以上，非应用商店安装的 App 要先在应用信息里“允许受限设置”，才能开启服务。
+  - 很多机型上，强制停止 App 后服务会被关掉，需要重新开启。
 - **节点信息的局限：**
-  - Compose（未开启 `testTagsAsResourceId` 时）和 Flutter 页面通常没有 view id，可以改用 `text`、`desc` 或坐标手势。
-  - WebView 的节点树可能不完整。
-  - Toast 不是窗口，匹配不到。
-- **快照上限。** 单次快照最多 3000 个节点、深度 64、耗时 3 秒，超出时这一轮跳过。
+  - Compose（未开启 `testTagsAsResourceId` 时）和 Flutter 页面通常没有 view id，可以改用文本、描述或坐标手势。
+  - WebView 的节点可能不完整。
+  - Toast 匹配不到。
+  - Android 14 及以上，标记为 `accessibilityDataSensitive` 的控件不可见。
+  - 节点特别多（超过 3000 个）的页面会被跳过。
 
 ## Demo
 
-`demo` 模块里有一组确定性的目标页面（首页 → 任务页 → 完成页，可选广告弹窗、售罄分支、第一次点击无效），以及控制台页面：
+`demo` 模块有一组用来演示的页面：首页 → 任务页 → 完成页，可以选择弹出广告、走售罄分支、或者第一次点击无效；另外还有一个控制台页面。
 
 ```bash
 ./gradlew :demo:installDebug
 
-# 用 adb 开启服务（会覆盖已开启的其他服务；需要保留时先 get，再用 ':' 拼接）
+# 开启服务（会覆盖已开启的其他服务；部分 ROM 不允许 adb 改这个设置，需要在手机上手动开启）
 adb shell settings put secure enabled_accessibility_services \
     com.github.susanaluis877.apex.demo/com.github.susanaluis877.apex.service.ApexAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 
 # 自动运行 JSON 流程并弹出广告
-adb logcat -c && adb logcat -v time -s Apex ApexDemo &
+adb logcat -s Apex ApexDemo &
 adb shell am start -n com.github.susanaluis877.apex.demo/.MainActivity --es autorun json --ez ad true
 ```
 
-`autorun` 可以是：
+`autorun` 参数：
 
-- `json` 或 `dsl`：运行对应写法的流程。
-- `dump`：导出当前屏幕的节点树。
+- `json` / `dsl`：运行对应写法的流程。
+- `dump`：导出当前屏幕。
 
 场景开关：
 
-- `--ez soldOut true`：走售罄的失败分支。
-- `--ez loseFirstClick true`：第一次点击无效，用来看重试。
-- `--el cancelAfterMs 4500`：开始后 4.5 秒取消。
-
-部分 ROM（例如 ColorOS）不允许 adb 写 secure 设置，需要在手机的无障碍设置里手动开启服务。这些 ROM 上强制停止 App 也会把服务从已开启列表里移除。
-
-## 本地构建
-
-需要 JDK 21（由 `gradle/gradle-daemon-jvm.properties` 指定，Gradle 会自动在本机查找）和 Android SDK（platform 36）。
-
-```bash
-./gradlew :apex:test                     # 单元测试（引擎、匹配、解析都在 JVM 上跑）
-./gradlew :apex:assembleRelease          # 生成 AAR
-./gradlew :demo:installDebug             # 安装 demo 宿主
-```
-
-## 发布新版本
-
-1. 修改 `gradle.properties` 中的 `VERSION_NAME`。
-2. 提交并推送一个与版本号同名的 tag，例如 `0.2.0`。不要加 `v` 前缀，因为 tag 名会直接作为版本号和 `Apex.getVersion()` 的返回值。
-3. 打开 https://jitpack.io/#susanaluis877-ship-it/apex ，对该 tag 点击 "Get it" 触发构建，并查看构建日志。
+- `--ez soldOut true`：走售罄分支。
+- `--ez loseFirstClick true`：第一次点击无效，演示重试。
+- `--el cancelAfterMs 4500`：4.5 秒后取消。
 
 ## 许可证
 

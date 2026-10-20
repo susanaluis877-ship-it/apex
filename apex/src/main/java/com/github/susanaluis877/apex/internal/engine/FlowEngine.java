@@ -17,9 +17,11 @@ import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 流程状态机的执行引擎。在调用线程上同步运行一个流程直到结束，一个实例只能运行一次。
@@ -42,6 +44,9 @@ public final class FlowEngine {
 
     private final String runId;
     private final Flow flow;
+    /** 本次运行生效的拦截器：流程自己的在前，全局的在后。 */
+    private final List<Interceptor> interceptors;
+    private final Set<String> globalIds = new HashSet<>();
     private final ScreenSource source;
     private final Clock clock;
     private final Waiter waiter;
@@ -63,13 +68,25 @@ public final class FlowEngine {
     private long lastWaitLoggedAt;
 
     /**
-     * @param runId    本次运行的编号，出现在每一行日志和结果里
-     * @param listener 只会收到 onStateEntered 和 onInterceptor，在引擎线程上同步调用；结果由 {@link #run()} 返回
+     * @param runId              本次运行的编号，出现在每一行日志和结果里
+     * @param globalInterceptors 运行开始时的全局拦截器快照，按 {@link Flow#effectiveInterceptors} 的规则合并
+     * @param listener           只会收到 onStateEntered 和 onInterceptor，在引擎线程上同步调用；结果由 {@link #run()} 返回
      */
-    public FlowEngine(String runId, Flow flow, ScreenSource source, ActionExecutor executor, Clock clock,
-                      Waiter waiter, FlowListener listener, EngineConfig config) {
+    public FlowEngine(String runId, Flow flow, List<Interceptor> globalInterceptors, ScreenSource source,
+                      ActionExecutor executor, Clock clock, Waiter waiter, FlowListener listener,
+                      EngineConfig config) {
         this.runId = runId;
         this.flow = flow;
+        this.interceptors = flow.effectiveInterceptors(globalInterceptors);
+        Set<String> own = new HashSet<>();
+        for (Interceptor interceptor : flow.getInterceptors()) {
+            own.add(interceptor.getId());
+        }
+        for (Interceptor interceptor : interceptors) {
+            if (!own.contains(interceptor.getId())) {
+                globalIds.add(interceptor.getId());
+            }
+        }
         this.source = source;
         this.clock = clock;
         this.waiter = waiter;
@@ -342,7 +359,7 @@ public final class FlowEngine {
         if (totalInterceptions >= flow.getMaxInterceptions()) {
             return null;
         }
-        for (Interceptor interceptor : flow.getInterceptors()) {
+        for (Interceptor interceptor : interceptors) {
             Integer count = interceptorCounts.get(interceptor.getId());
             if (count != null && count >= interceptor.getMaxTimes()) {
                 continue;
@@ -363,7 +380,8 @@ public final class FlowEngine {
         interceptorCounts.put(interceptor.getId(), count);
         totalInterceptions++;
         tracer.event(Type.INTERCEPTOR, ApexLogger.INFO, currentId(), interceptor.getId() + " (" + count + "/"
-                + interceptor.getMaxTimes() + ") on " + summary(screen));
+                + interceptor.getMaxTimes() + (globalIds.contains(interceptor.getId()) ? ", global" : "") + ") on "
+                + summary(screen));
         notifyInterceptor(interceptor.getId(), count);
         String owner = "interceptor " + interceptor.getId();
         List<Action> actions = interceptor.getActions();
@@ -520,16 +538,16 @@ public final class FlowEngine {
     }
 
     private String describeFlow() {
-        List<String> interceptors = new ArrayList<>();
-        for (Interceptor interceptor : flow.getInterceptors()) {
-            interceptors.add(interceptor.getId());
+        List<String> names = new ArrayList<>();
+        for (Interceptor interceptor : interceptors) {
+            names.add(globalIds.contains(interceptor.getId()) ? interceptor.getId() + "(global)" : interceptor.getId());
         }
         List<String> states = new ArrayList<>();
         for (State state : flow.getStates()) {
             states.add(state.getId());
         }
         return "flow " + flow.getId() + ": start '" + flow.getStart() + "', states " + states
-                + ", interceptors " + interceptors + ", timeout " + TraceEvent.formatSeconds(flow.getTimeoutMs())
+                + ", interceptors " + names + ", timeout " + TraceEvent.formatSeconds(flow.getTimeoutMs())
                 + ", maxSteps " + flow.getMaxSteps();
     }
 

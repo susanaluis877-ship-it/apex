@@ -8,18 +8,23 @@ import android.provider.Settings;
 
 import com.github.susanaluis877.apex.action.CustomAction;
 import com.github.susanaluis877.apex.flow.Flow;
+import com.github.susanaluis877.apex.flow.FlowValidationException;
+import com.github.susanaluis877.apex.flow.Interceptor;
 import com.github.susanaluis877.apex.internal.ApexCore;
 import com.github.susanaluis877.apex.internal.ApexLog;
 import com.github.susanaluis877.apex.internal.Registry;
 import com.github.susanaluis877.apex.match.CustomMatcher;
 import com.github.susanaluis877.apex.service.ApexAccessibilityService;
 
+import java.util.List;
+import java.util.function.Consumer;
+
 /**
  * Apex SDK 对外入口。
  *
  * <p>所有方法都不会向宿主抛出异常，内部错误只记录日志或通过回调返回。
- * 定义流程的 {@link Flow.Builder#build()} 和 {@link com.github.susanaluis877.apex.flow.FlowParser#parse}
- * 是例外：流程写错时会抛出带具体位置的异常。
+ * 定义期的方法是例外：{@link Flow.Builder#build()}、{@link com.github.susanaluis877.apex.flow.FlowParser#parse}
+ * 和 {@link #addGlobalInterceptor} 在定义写错时会抛出带具体位置的异常。
  */
 public final class Apex {
 
@@ -131,6 +136,52 @@ public final class Apex {
         }
         Registry.get().registerMatcher(name, matcher);
         ApexLog.d("registered custom matcher '" + name + "'");
+    }
+
+    /**
+     * 注册一个对所有流程生效的全局拦截器，写法和 {@link Flow.Builder#interceptor} 相同：
+     *
+     * <pre>{@code
+     * Apex.addGlobalInterceptor("close_ad", i -> i
+     *         .match(has(By.id("iv_close_ad")))
+     *         .action(click(By.id("iv_close_ad"))));
+     * }</pre>
+     *
+     * <ul>
+     *   <li>每次运行开始时生效，排在流程自己的拦截器之后；运行中途增删不影响正在运行的流程。</li>
+     *   <li>流程里有同 id 的拦截器时用流程自己的；流程可以用 {@code excludeGlobalInterceptors} 排除，
+     *       或用 {@code useGlobalInterceptors(false)} 全部不用。</li>
+     *   <li>同 id 再次注册会替换原来的。没有设置的 maxTimes、cooldownMs 使用 SDK 默认值。</li>
+     *   <li>引用的自定义条件和动作必须先注册。</li>
+     * </ul>
+     *
+     * @throws FlowValidationException 定义不合法时，例如没有动作、引用了未注册的自定义条件
+     */
+    public static void addGlobalInterceptor(String id, Consumer<Interceptor.Builder> config) {
+        Interceptor interceptor = Interceptor.create(id, config);
+        Interceptor replaced = Registry.get().putGlobalInterceptor(interceptor);
+        ApexLog.d((replaced != null ? "replaced" : "added") + " global interceptor '" + id + "'");
+    }
+
+    /**
+     * 移除一个全局拦截器。
+     *
+     * @return 是否存在并被移除
+     */
+    public static boolean removeGlobalInterceptor(String id) {
+        boolean removed = id != null && Registry.get().removeGlobalInterceptor(id);
+        ApexLog.d("remove global interceptor '" + id + "': " + removed);
+        return removed;
+    }
+
+    /** 移除所有全局拦截器。 */
+    public static void clearGlobalInterceptors() {
+        Registry.get().clearGlobalInterceptors();
+    }
+
+    /** 当前注册的全局拦截器，按注册顺序排列。 */
+    public static List<Interceptor> getGlobalInterceptors() {
+        return Registry.get().globalInterceptors();
     }
 
     /**

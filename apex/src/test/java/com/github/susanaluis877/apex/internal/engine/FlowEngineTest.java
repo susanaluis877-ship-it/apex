@@ -41,6 +41,7 @@ public class FlowEngineTest {
     private final FakeDevice device = new FakeDevice();
     private final App app = new App();
     private final List<String> events = new ArrayList<>();
+    private final List<com.github.susanaluis877.apex.flow.Interceptor> globals = new ArrayList<>();
     private final FlowListener listener = new FlowListener() {
         @Override
         public void onStateEntered(String stateId, int step) {
@@ -139,7 +140,7 @@ public class FlowEngineTest {
     }
 
     private RunResult run(Flow flow) {
-        return new FlowEngine(flow.getId() + "#1", flow, device, device, device, device, listener,
+        return new FlowEngine(flow.getId() + "#1", flow, globals, device, device, device, device, listener,
                 EngineConfig.DEFAULT).run();
     }
 
@@ -507,6 +508,64 @@ public class FlowEngineTest {
         RunResult r = run(flow);
         assertEquals(Status.ERROR, r.getStatus());
         assertTrue(r.getMessage(), r.getMessage().endsWith("custom and run(...) actions cannot be nested"));
+    }
+
+    // ---- 全局拦截器 ----
+
+    /** 和 demo 相同的状态，但流程自己没有拦截器。 */
+    private static Flow.Builder plain() {
+        return new Flow.Builder("plain").start("home")
+                .state("home", s -> s.match(has(By.id("start"))).action(click(By.id("start"))).next("task"))
+                .state("task", s -> s.match(has(By.id("claim").enabled(true))).action(click(By.id("claim")))
+                        .next("done"))
+                .state("done", s -> s.match(has(By.textContains("Reward claimed"))).endSuccess());
+    }
+
+    private static com.github.susanaluis877.apex.flow.Interceptor closeAd(String id) {
+        return com.github.susanaluis877.apex.flow.Interceptor.create(id, i -> i
+                .match(has(By.text("AD"), By.id("ad_close"))).action(click(By.id("ad_close"))));
+    }
+
+    @Test
+    public void globalInterceptorAppliesToFlowsWithoutTheirOwn() {
+        globals.add(closeAd("close_ad"));
+        app.ad = true;
+        RunResult r = run(plain().build());
+        assertEquals(r.formatTrace(), Status.SUCCESS, r.getStatus());
+        assertEquals(Arrays.asList("click:start", "click:ad_close", "click:claim"), device.log);
+        assertEquals(Collections.singletonMap("close_ad", 1), r.getInterceptorCounts());
+        assertTrue(r.getTrace().get(0).getMessage().contains("interceptors [close_ad(global)]"));
+        assertTrue(first(r, TraceEvent.Type.INTERCEPTOR).getMessage().startsWith("close_ad (1/5, global) on "));
+    }
+
+    @Test
+    public void flowInterceptorsComeFirstAndOverrideSameId() {
+        // 同 id 的全局拦截器会按返回键，流程自己的会点关闭；另一个全局拦截器也匹配，但排在流程自己的之后
+        globals.add(com.github.susanaluis877.apex.flow.Interceptor.create("close_ad", i -> i
+                .match(has(By.text("AD"))).action(back())));
+        globals.add(com.github.susanaluis877.apex.flow.Interceptor.create("other", i -> i
+                .match(has(By.text("AD"))).action(back())));
+        app.ad = true;
+        RunResult r = run(demo(2).build());
+        assertEquals(Status.SUCCESS, r.getStatus());
+        assertEquals(Arrays.asList("click:start", "click:ad_close", "click:claim"), device.log);
+        assertEquals(Collections.singletonMap("close_ad", 1), r.getInterceptorCounts());
+    }
+
+    @Test
+    public void excludedOrDisabledGlobalsAreNotUsed() {
+        globals.add(closeAd("close_ad"));
+        app.ad = true;
+        RunResult r = run(plain().excludeGlobalInterceptors("close_ad").build());
+        assertEquals(Status.SUCCESS, r.getStatus());
+        assertEquals("没有拦截器时直接点下面的按钮", Arrays.asList("click:start", "click:claim"), device.log);
+        assertTrue(r.getInterceptorCounts().isEmpty());
+
+        device.log.clear();
+        app.page = "home";
+        app.ad = true;
+        r = run(plain().useGlobalInterceptors(false).build());
+        assertEquals(Arrays.asList("click:start", "click:claim"), device.log);
     }
 
     // ---- 运行轨迹与日志 ----

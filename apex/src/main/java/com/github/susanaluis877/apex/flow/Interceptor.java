@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * 全局拦截器：任何时候屏幕匹配它的条件，就先执行它的动作（例如关闭广告弹窗），然后回到被打断的状态继续。
@@ -49,6 +50,23 @@ public final class Interceptor {
 
     public long getCooldownMs() {
         return cooldownMs;
+    }
+
+    /**
+     * 单独定义一个拦截器，用于 {@code Apex.addGlobalInterceptor}。没有设置的 maxTimes、cooldownMs 使用 SDK 默认值，
+     * 不受各个流程 defaults 的影响。
+     *
+     * @throws FlowValidationException 定义不合法时，例如没有动作、引用了未注册的自定义条件
+     */
+    public static Interceptor create(String id, Consumer<Builder> config) {
+        Builder b = new Builder();
+        config.accept(b);
+        List<FlowValidationException.Problem> problems = new ArrayList<>();
+        Flow.Builder.checkInterceptor(-1, id, b, problems);
+        if (!problems.isEmpty()) {
+            throw new FlowValidationException(problems);
+        }
+        return new Interceptor(id, b, new FlowDefaults.Builder().build());
     }
 
     @Override

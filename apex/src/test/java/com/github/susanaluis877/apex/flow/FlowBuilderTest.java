@@ -61,6 +61,42 @@ public class FlowBuilderTest {
         assertEquals(valid().build(), valid().build());
         assertEquals(valid().build().hashCode(), valid().build().hashCode());
         assertNotEquals(valid().build(), valid().maxSteps(3).build());
+        assertNotEquals(valid().build(), valid().useGlobalInterceptors(false).build());
+        assertNotEquals(valid().build(), valid().excludeGlobalInterceptors("x").build());
+    }
+
+    @Test
+    public void effectiveInterceptorsMergeGlobalsAfterOwn() {
+        Interceptor perm = Interceptor.create("perm", i -> i.match(always()).action(back()));
+        Interceptor globalAd = Interceptor.create("ad", i -> i.match(always()).action(back()));
+        Interceptor upgrade = Interceptor.create("upgrade", i -> i.match(always()).action(back()));
+        Interceptor notice = Interceptor.create("notice", i -> i.match(always()).action(back()));
+        List<Interceptor> globals = java.util.Arrays.asList(perm, globalAd, upgrade, notice);
+
+        Flow flow = valid().excludeGlobalInterceptors("upgrade").build();
+        List<Interceptor> effective = flow.effectiveInterceptors(globals);
+        assertEquals("流程自己的在前、同 id 用流程的、排除的跳过",
+                java.util.Arrays.asList(flow.getInterceptors().get(0), perm, notice), effective);
+        assertEquals(flow.getInterceptors(), valid().useGlobalInterceptors(false).build().effectiveInterceptors(globals));
+    }
+
+    @Test
+    public void standaloneInterceptorIsValidatedAndUsesSdkDefaults() {
+        Interceptor ok = Interceptor.create("x", i -> i.match(always()).action(back()));
+        assertEquals(FlowDefaults.DEFAULT_INTERCEPTOR_MAX_TIMES, ok.getMaxTimes());
+        assertEquals(FlowDefaults.DEFAULT_INTERCEPTOR_COOLDOWN_MS, ok.getCooldownMs());
+        try {
+            Interceptor.create("bad", i -> i.match(Match.custom("nope")).maxTimes(0));
+            fail();
+        } catch (FlowValidationException e) {
+            List<String> messages = new ArrayList<>();
+            for (Problem p : e.getProblems()) {
+                messages.add(p.toString());
+            }
+            assertTrue(messages.toString(), messages.contains("interceptor 'bad'.match: custom matcher 'nope' is not registered"));
+            assertTrue(messages.contains("interceptor 'bad'.actions: interceptor needs at least one action"));
+            assertTrue(messages.contains("interceptor 'bad'.maxTimes: must be > 0"));
+        }
     }
 
     @Test
