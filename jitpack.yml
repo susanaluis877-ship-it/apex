@@ -1,0 +1,7 @@
+# AGP 9 / Gradle 9 至少需要 JDK 17，JitPack 默认是 JDK 8
+jdk:
+  - openjdk17
+
+# 只构建并发布 SDK 模块，跳过 demo 宿主
+install:
+  - ./gradlew :apex:publishToMavenLocal

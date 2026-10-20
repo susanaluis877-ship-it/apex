@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SDK 不声明额外权限，需要的权限由宿主按需声明 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
