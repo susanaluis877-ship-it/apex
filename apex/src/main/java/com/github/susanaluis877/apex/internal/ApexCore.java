@@ -26,6 +26,7 @@ import com.github.susanaluis877.apex.service.ApexAccessibilityService;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -42,6 +43,7 @@ public final class ApexCore {
     private final EventSignal signal = new EventSignal();
     private final ActivityTracker activityTracker = new ActivityTracker();
     private final AtomicReference<Run> current = new AtomicReference<>();
+    private final AtomicInteger runCounter = new AtomicInteger();
 
     private Handler mainHandler;
     private ExecutorService engineThread;
@@ -62,7 +64,7 @@ public final class ApexCore {
                 ApexLog.d("init: already initialized, ignored");
                 return;
             }
-            ApexLog.setDebug(config.isDebug());
+            ApexLog.configure(config.getLogger(), config.getLogLevel());
             initialized = true;
         }
         ApexLog.i("initialized, version=" + BuildConfig.SDK_VERSION + ", host=" + appContext.getPackageName()
@@ -124,6 +126,7 @@ public final class ApexCore {
                     "accessibility service is not connected; ask the user to enable it in system settings"));
         }
         Run run = new Run(flowId, new RunController(signal));
+        String runId = flowId + "#" + runCounter.incrementAndGet();
         if (!current.compareAndSet(null, run)) {
             return finishImmediately(listener, RunResult.notStarted(RunResult.Status.BUSY, flowId,
                     "flow '" + current.get() + "' is running"));
@@ -134,10 +137,10 @@ public final class ApexCore {
             try {
                 AccessibilityScreenSource source = new AccessibilityScreenSource(this::service, activityTracker);
                 AndroidActionExecutor executor = new AndroidActionExecutor(source, this::service);
-                result = new FlowEngine(flow, source, executor, Clock.SYSTEM, run.controller, mainListener,
-                        EngineConfig.DEFAULT).run();
+                result = new FlowEngine(runId, flow, source, executor, Clock.SYSTEM, run.controller,
+                        mainListener, EngineConfig.DEFAULT).run();
             } catch (Throwable t) {
-                ApexLog.e("run " + flowId + " crashed", t);
+                ApexLog.e("[" + runId + "] run crashed", t);
                 result = RunResult.notStarted(RunResult.Status.ERROR, flowId, "internal error: " + t);
             }
             // 先释放槽位再回调，宿主可以在 onFinished 里直接开始下一个流程
@@ -163,15 +166,13 @@ public final class ApexCore {
         engineThread().execute(() -> {
             ScreenSnapshot snapshot = new AccessibilityScreenSource(this::service, activityTracker).snapshot();
             String text = snapshot != null ? ScreenDumper.dump(snapshot) : "unavailable: snapshot failed";
-            for (String line : text.split("\n")) {
-                ApexLog.i(line);
-            }
+            ApexLog.i(text);
             postMain(() -> callback.onDump(snapshot, text));
         });
     }
 
     private RunHandle finishImmediately(FlowListener listener, RunResult result) {
-        ApexLog.e("run not started: " + result);
+        ApexLog.w("run not started: " + result);
         if (listener != null) {
             postMain(() -> listener.onFinished(result));
         }

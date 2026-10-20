@@ -4,8 +4,11 @@ import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.node.UiNode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -37,6 +40,8 @@ public final class Selector {
 
     private Pattern textPattern;
     private Pattern descPattern;
+    /** 由字段派生的条件列表，首次使用时构建；每次修改都会复制出新对象，所以不需要失效。 */
+    private List<Cond> conds;
 
     Selector() {
     }
@@ -158,46 +163,160 @@ public final class Selector {
     }
 
     public boolean matches(UiNode node) {
-        if (visibleOnly && !node.isVisible()) {
-            return false;
+        for (Cond c : conditions()) {
+            if (!c.test.test(node)) {
+                return false;
+            }
         }
-        if (text != null && !text.equals(node.getText())) {
-            return false;
+        return true;
+    }
+
+    /**
+     * 说明这个选择器为什么在屏幕上找不到节点，用于日志和运行轨迹；能找到时返回 null。
+     *
+     * <p>优先报告“差一个条件”的节点，例如 {@code 1 node(s) match all but enabled=true, e.g. Button ... (enabled=false)}；
+     * 否则报告每个文本/id/类名条件各命中多少个节点。
+     */
+    public String explainMismatch(ScreenSnapshot screen) {
+        List<Cond> all = conditions();
+        int[] hits = new int[all.size()];
+        int[] nearMisses = new int[all.size()];
+        UiNode[] examples = new UiNode[all.size()];
+        boolean anyIdentity = hasIdentity(all);
+        for (UiNode node : screen.nodes()) {
+            int failed = -1;
+            int failures = 0;
+            boolean identityHit = false;
+            for (int i = 0; i < all.size(); i++) {
+                Cond c = all.get(i);
+                if (c.test.test(node)) {
+                    hits[i]++;
+                    identityHit |= c.identity;
+                } else {
+                    failures++;
+                    failed = i;
+                }
+            }
+            if (failures == 0) {
+                return null;
+            }
+            // 只有命中了文本/id/类名之类的条件，才算“差一点”；否则几乎所有节点都只差那一个条件
+            if (failures == 1 && (identityHit || !anyIdentity)) {
+                nearMisses[failed]++;
+                if (examples[failed] == null) {
+                    examples[failed] = node;
+                }
+            }
         }
-        if (textContains != null && (node.getText() == null || !node.getText().contains(textContains))) {
-            return false;
+        if (all.size() > 1) {
+            int best = -1;
+            for (int i = 0; i < all.size(); i++) {
+                if (nearMisses[i] > 0 && (best < 0 || nearMisses[i] > nearMisses[best])) {
+                    best = i;
+                }
+            }
+            if (best >= 0) {
+                Cond c = all.get(best);
+                return nearMisses[best] + " node(s) match all but " + c.label + ", e.g. " + examples[best]
+                        + " (" + c.actual.apply(examples[best]) + ")";
+            }
         }
-        if (textPattern != null && (node.getText() == null || !textPattern.matcher(node.getText()).matches())) {
-            return false;
+        // 没有“差一点”的节点：列出每个文本/id/类名条件各命中几个节点（没有这类条件时列出全部）
+        List<String> counts = new ArrayList<>();
+        for (int i = 0; i < all.size(); i++) {
+            Cond c = all.get(i);
+            if (c.identity || !anyIdentity) {
+                counts.add(c.label + ": " + hits[i] + " node(s)");
+            }
         }
-        if (desc != null && !desc.equals(node.getDesc())) {
-            return false;
+        return "no node matches (" + String.join(", ", counts) + ")";
+    }
+
+    private static boolean hasIdentity(List<Cond> conds) {
+        for (Cond c : conds) {
+            if (c.identity) {
+                return true;
+            }
         }
-        if (descContains != null && (node.getDesc() == null || !node.getDesc().contains(descContains))) {
-            return false;
+        return false;
+    }
+
+    /** 选择器的每个条件，matches 和 explainMismatch 共用同一份定义。 */
+    private List<Cond> conditions() {
+        List<Cond> list = conds;
+        if (list != null) {
+            return list;
         }
-        if (descPattern != null && (node.getDesc() == null || !descPattern.matcher(node.getDesc()).matches())) {
-            return false;
+        list = new ArrayList<>();
+        if (text != null) {
+            list.add(new Cond(true, "text=" + quote(text), n -> text.equals(n.getText()),
+                    n -> "text=" + quote(n.getText())));
         }
-        if (id != null && !idMatches(node.getViewId())) {
-            return false;
+        if (textContains != null) {
+            list.add(new Cond(true, "textContains=" + quote(textContains),
+                    n -> n.getText() != null && n.getText().contains(textContains), n -> "text=" + quote(n.getText())));
         }
-        if (className != null && !classMatches(node)) {
-            return false;
+        if (textPattern != null) {
+            list.add(new Cond(true, "textMatches=" + quote(textMatches),
+                    n -> n.getText() != null && textPattern.matcher(n.getText()).matches(),
+                    n -> "text=" + quote(n.getText())));
         }
-        if (clickable != null && clickable != node.isClickable()) {
-            return false;
+        if (desc != null) {
+            list.add(new Cond(true, "desc=" + quote(desc), n -> desc.equals(n.getDesc()),
+                    n -> "desc=" + quote(n.getDesc())));
         }
-        if (enabled != null && enabled != node.isEnabled()) {
-            return false;
+        if (descContains != null) {
+            list.add(new Cond(true, "descContains=" + quote(descContains),
+                    n -> n.getDesc() != null && n.getDesc().contains(descContains), n -> "desc=" + quote(n.getDesc())));
         }
-        if (checked != null && checked != node.isChecked()) {
-            return false;
+        if (descPattern != null) {
+            list.add(new Cond(true, "descMatches=" + quote(descMatches),
+                    n -> n.getDesc() != null && descPattern.matcher(n.getDesc()).matches(),
+                    n -> "desc=" + quote(n.getDesc())));
         }
-        if (selected != null && selected != node.isSelected()) {
-            return false;
+        if (id != null) {
+            list.add(new Cond(true, "id=" + quote(id), n -> idMatches(n.getViewId()),
+                    n -> "id=" + quote(n.getViewId())));
         }
-        return scrollable == null || scrollable == node.isScrollable();
+        if (className != null) {
+            list.add(new Cond(true, "className=" + quote(className), this::classMatches,
+                    n -> "className=" + quote(n.getClassName())));
+        }
+        if (clickable != null) {
+            boolean want = clickable;
+            list.add(new Cond(false, "clickable=" + want, n -> n.isClickable() == want,
+                    n -> "clickable=" + n.isClickable()));
+        }
+        if (enabled != null) {
+            boolean want = enabled;
+            list.add(new Cond(false, "enabled=" + want, n -> n.isEnabled() == want,
+                    n -> "enabled=" + n.isEnabled()));
+        }
+        if (checked != null) {
+            boolean want = checked;
+            list.add(new Cond(false, "checked=" + want, n -> n.isChecked() == want,
+                    n -> "checked=" + n.isChecked()));
+        }
+        if (selected != null) {
+            boolean want = selected;
+            list.add(new Cond(false, "selected=" + want, n -> n.isSelected() == want,
+                    n -> "selected=" + n.isSelected()));
+        }
+        if (scrollable != null) {
+            boolean want = scrollable;
+            list.add(new Cond(false, "scrollable=" + want, n -> n.isScrollable() == want,
+                    n -> "scrollable=" + n.isScrollable()));
+        }
+        if (visibleOnly) {
+            list.add(new Cond(false, "visible=true", UiNode::isVisible, n -> "visible=" + n.isVisible()));
+        }
+        list = Collections.unmodifiableList(list);
+        conds = list;
+        return list;
+    }
+
+    private static String quote(String s) {
+        return s == null ? "null" : '"' + s + '"';
     }
 
     private boolean idMatches(String viewId) {
@@ -304,6 +423,21 @@ public final class Selector {
             sb.append('"').append(value).append('"');
         } else {
             sb.append(value);
+        }
+    }
+
+    private static final class Cond {
+        /** 文本、描述、id、类名这类决定“是哪个节点”的条件；其余是状态过滤。 */
+        final boolean identity;
+        final String label;
+        final Predicate<UiNode> test;
+        final Function<UiNode, String> actual;
+
+        Cond(boolean identity, String label, Predicate<UiNode> test, Function<UiNode, String> actual) {
+            this.identity = identity;
+            this.label = label;
+            this.test = test;
+            this.actual = actual;
         }
     }
 }

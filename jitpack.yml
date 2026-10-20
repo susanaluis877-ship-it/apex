@@ -1,6 +1,6 @@
-# AGP 9 / Gradle 9 至少需要 JDK 17，JitPack 默认是 JDK 8
+# gradle/gradle-daemon-jvm.properties 要求 Gradle 守护进程用 JDK 21，JitPack 默认是 JDK 8
 jdk:
-  - openjdk17
+  - openjdk21
 
 # 只构建并发布 SDK 模块，跳过 demo 宿主
 install:

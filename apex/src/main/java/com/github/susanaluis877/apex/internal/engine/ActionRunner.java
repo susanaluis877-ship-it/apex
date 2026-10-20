@@ -1,5 +1,7 @@
 package com.github.susanaluis877.apex.internal.engine;
 
+import com.github.susanaluis877.apex.ApexLogger;
+import com.github.susanaluis877.apex.TraceEvent;
 import com.github.susanaluis877.apex.action.Action;
 import com.github.susanaluis877.apex.action.ActionContext;
 import com.github.susanaluis877.apex.action.Actions;
@@ -12,20 +14,24 @@ import com.github.susanaluis877.apex.node.UiNode;
 
 /**
  * 把 {@link Action} 描述翻译成设备操作：在快照里找目标、找可点击的祖先、必要时退回坐标手势。
+ *
+ * <p>成功的结果都带上实际做了什么（哪个节点、哪种方式、坐标），供运行轨迹使用。
  */
 final class ActionRunner {
 
     private final ScreenSource source;
     private final ActionExecutor executor;
     private final Waiter waiter;
+    private final Tracer tracer;
 
-    ActionRunner(ScreenSource source, ActionExecutor executor, Waiter waiter) {
+    ActionRunner(ScreenSource source, ActionExecutor executor, Waiter waiter, Tracer tracer) {
         this.source = source;
         this.executor = executor;
         this.waiter = waiter;
+        this.tracer = tracer;
     }
 
-    ActionResult run(Action action, ScreenSnapshot screen) {
+    ActionResult run(Action action, ScreenSnapshot screen, String stateId) {
         if (action.getDelayMs() > 0) {
             waiter.sleep(action.getDelayMs());
             if (waiter.isCancelled()) {
@@ -33,14 +39,14 @@ final class ActionRunner {
             }
             screen = source.snapshot();
             if (screen == null) {
-                return ActionResult.soft("service unavailable");
+                return ActionResult.soft("service unavailable after delay");
             }
         }
         if (action instanceof Action.Click) {
             Action.Click click = (Action.Click) action;
             UiNode node = click.getTarget().findFirst(screen);
             if (node == null) {
-                return ActionResult.soft("target not found: " + click.getTarget());
+                return ActionResult.soft("target not found: " + click.getTarget().explainMismatch(screen));
             }
             return click(node, click.getMode(), click.isLongClick(), screen);
         }
@@ -48,12 +54,17 @@ final class ActionRunner {
             Action.Tap tap = (Action.Tap) action;
             int x = clampX(tap.getPoint(), screen);
             int y = clampY(tap.getPoint(), screen);
-            return executor.gesture(x, y, x, y, tap.getDurationMs());
+            return detail(executor.gesture(x, y, x, y, tap.getDurationMs()),
+                    "tap (" + x + "," + y + ") " + tap.getDurationMs() + "ms");
         }
         if (action instanceof Action.Swipe) {
             Action.Swipe swipe = (Action.Swipe) action;
-            return executor.gesture(clampX(swipe.getFrom(), screen), clampY(swipe.getFrom(), screen),
-                    clampX(swipe.getTo(), screen), clampY(swipe.getTo(), screen), swipe.getDurationMs());
+            int x1 = clampX(swipe.getFrom(), screen);
+            int y1 = clampY(swipe.getFrom(), screen);
+            int x2 = clampX(swipe.getTo(), screen);
+            int y2 = clampY(swipe.getTo(), screen);
+            return detail(executor.gesture(x1, y1, x2, y2, swipe.getDurationMs()),
+                    "swipe (" + x1 + "," + y1 + ")->(" + x2 + "," + y2 + ") " + swipe.getDurationMs() + "ms");
         }
         if (action instanceof Action.Scroll) {
             return scroll((Action.Scroll) action, screen);
@@ -62,48 +73,64 @@ final class ActionRunner {
             Action.SetText setText = (Action.SetText) action;
             UiNode node = setText.getTarget().findFirst(screen);
             if (node == null) {
-                return ActionResult.soft("target not found: " + setText.getTarget());
+                return ActionResult.soft("target not found: " + setText.getTarget().explainMismatch(screen));
             }
             if (!node.isEditable()) {
                 return ActionResult.hard("target is not editable: " + node);
             }
-            return executor.setText(node, setText.getText());
+            return detail(executor.setText(node, setText.getText()), "ACTION_SET_TEXT on " + node);
         }
         if (action instanceof Action.Global) {
-            return executor.global(((Action.Global) action).getKind());
+            Action.GlobalAction kind = ((Action.Global) action).getKind();
+            return detail(executor.global(kind), "GLOBAL_ACTION_" + kind);
         }
         if (action instanceof Action.LaunchApp) {
-            return executor.launchApp(((Action.LaunchApp) action).getPackageName());
+            String pkg = ((Action.LaunchApp) action).getPackageName();
+            return detail(executor.launchApp(pkg), "launched " + pkg);
         }
         if (action instanceof Action.Sleep) {
-            waiter.sleep(((Action.Sleep) action).getMs());
-            return waiter.isCancelled() ? ActionResult.cancelled() : ActionResult.OK;
+            long ms = ((Action.Sleep) action).getMs();
+            waiter.sleep(ms);
+            return waiter.isCancelled() ? ActionResult.cancelled() : ActionResult.ok("slept " + ms + "ms");
         }
         if (action instanceof Action.Custom) {
-            return custom((Action.Custom) action, screen);
+            return custom((Action.Custom) action, screen, stateId);
         }
         return ActionResult.error("unsupported action: " + action);
     }
 
     ActionResult click(UiNode node, Action.ClickMode mode, boolean longClick, ScreenSnapshot screen) {
+        String nodeAction = longClick ? "ACTION_LONG_CLICK" : "ACTION_CLICK";
+        String nodeFailure = null;
         if (mode != Action.ClickMode.GESTURE) {
             UiNode clickable = clickableSelfOrAncestor(node, longClick);
             if (clickable != null) {
                 ActionResult r = executor.clickNode(clickable, longClick);
-                if (r.isOk() || mode == Action.ClickMode.NODE) {
+                String on = clickable == node ? " on " + node : " on ancestor " + clickable + " of " + node;
+                if (r.isOk()) {
+                    return ActionResult.ok(nodeAction + on);
+                }
+                if (mode == Action.ClickMode.NODE) {
                     return r;
                 }
+                nodeFailure = nodeAction + on + " failed: " + r.getMessage();
             } else if (mode == Action.ClickMode.NODE) {
                 return ActionResult.soft("no " + (longClick ? "long-" : "") + "clickable node for " + node);
+            } else {
+                nodeFailure = "no " + (longClick ? "long-" : "") + "clickable node or ancestor";
             }
         }
         Bounds b = node.getBounds();
         if (b.isEmpty()) {
-            return ActionResult.soft("target has empty bounds: " + node);
+            return ActionResult.soft("target has empty bounds: " + node
+                    + (nodeFailure != null ? "; " + nodeFailure : ""));
         }
         int x = clamp(b.centerX(), screen.getScreenWidth());
         int y = clamp(b.centerY(), screen.getScreenHeight());
-        return executor.gesture(x, y, x, y, longClick ? Actions.DEFAULT_LONG_PRESS_MS : Actions.DEFAULT_TAP_MS);
+        long duration = longClick ? Actions.DEFAULT_LONG_PRESS_MS : Actions.DEFAULT_TAP_MS;
+        String detail = (longClick ? "long-press" : "tap") + " (" + x + "," + y + ") " + duration + "ms on " + node
+                + (nodeFailure != null ? " after " + nodeFailure : "");
+        return detail(executor.gesture(x, y, x, y, duration), detail);
     }
 
     private ActionResult scroll(Action.Scroll scroll, ScreenSnapshot screen) {
@@ -122,7 +149,7 @@ final class ActionRunner {
         } else {
             node = scroll.getTarget().findFirst(screen);
             if (node == null) {
-                return ActionResult.soft("target not found: " + scroll.getTarget());
+                return ActionResult.soft("target not found: " + scroll.getTarget().explainMismatch(screen));
             }
             while (node != null && !node.isScrollable()) {
                 node = node.getParent();
@@ -131,18 +158,19 @@ final class ActionRunner {
                 return ActionResult.soft("target has no scrollable container: " + scroll.getTarget());
             }
         }
-        return executor.scrollNode(node, scroll.getDirection());
+        return detail(executor.scrollNode(node, scroll.getDirection()),
+                "ACTION_SCROLL_" + scroll.getDirection() + " on " + node);
     }
 
-    private ActionResult custom(Action.Custom action, ScreenSnapshot screen) {
+    private ActionResult custom(Action.Custom action, ScreenSnapshot screen, String stateId) {
         CustomAction custom = Registry.get().action(action.getName());
         if (custom == null) {
             return ActionResult.error("custom action '" + action.getName() + "' is not registered");
         }
-        Context context = new Context(screen);
+        Context context = new Context(screen, stateId, action.getName());
         try {
             if (custom.perform(context, action.getArgs())) {
-                return ActionResult.OK;
+                return ActionResult.ok("custom '" + action.getName() + "' returned true");
             }
             return waiter.isCancelled()
                     ? ActionResult.cancelled()
@@ -150,6 +178,11 @@ final class ActionRunner {
         } catch (Exception e) {
             return ActionResult.error("custom action '" + action.getName() + "' threw " + e);
         }
+    }
+
+    /** 执行器成功时换成带细节的结果，失败时原样返回。 */
+    private static ActionResult detail(ActionResult r, String detail) {
+        return r.isOk() ? ActionResult.ok(detail) : r;
     }
 
     private static UiNode clickableSelfOrAncestor(UiNode node, boolean longClick) {
@@ -176,13 +209,17 @@ final class ActionRunner {
         return Math.max(0, Math.min(size - 1, value));
     }
 
-    /** 提供给自定义动作的环境，所有操作都基于它持有的“当前快照”。 */
+    /** 提供给自定义动作的环境，所有操作都基于它持有的“当前快照”，并记入运行轨迹。 */
     private final class Context implements ActionContext {
 
+        private final String stateId;
+        private final String name;
         private ScreenSnapshot screen;
 
-        Context(ScreenSnapshot screen) {
+        Context(ScreenSnapshot screen, String stateId, String name) {
             this.screen = screen;
+            this.stateId = stateId;
+            this.name = name;
         }
 
         @Override
@@ -204,12 +241,13 @@ final class ActionRunner {
             if (action instanceof Action.Custom) {
                 throw new IllegalArgumentException("nested custom actions are not supported");
             }
-            return run(action, screen).isOk();
+            return trace(action.toString(), run(action, screen, stateId));
         }
 
         @Override
         public boolean click(UiNode node) {
-            return ActionRunner.this.click(node, Action.ClickMode.AUTO, false, screen).isOk();
+            return trace("click " + node,
+                    ActionRunner.this.click(node, Action.ClickMode.AUTO, false, screen));
         }
 
         @Override
@@ -220,6 +258,14 @@ final class ActionRunner {
         @Override
         public boolean isCancelled() {
             return waiter.isCancelled();
+        }
+
+        private boolean trace(String what, ActionResult r) {
+            boolean failed = r.getStatus() == ActionResult.Status.HARD_FAIL
+                    || r.getStatus() == ActionResult.Status.ERROR;
+            tracer.event(TraceEvent.Type.ACTION, failed ? ApexLogger.ERROR : ApexLogger.DEBUG, stateId,
+                    "  custom '" + name + "' > " + what + " -> " + r);
+            return r.isOk();
         }
     }
 }

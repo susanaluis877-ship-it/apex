@@ -38,21 +38,34 @@ public final class RunResult {
 
     private final Status status;
     private final String flowId;
+    private final String runId;
     private final String endStateId;
     private final List<String> path;
     private final Map<String, Integer> interceptorCounts;
     private final long durationMs;
     private final String message;
+    private final List<TraceEvent> trace;
+    private final int droppedTraceEvents;
 
     public RunResult(Status status, String flowId, String endStateId, List<String> path,
                      Map<String, Integer> interceptorCounts, long durationMs, String message) {
+        this(status, flowId, null, endStateId, path, interceptorCounts, durationMs, message,
+                Collections.emptyList(), 0);
+    }
+
+    public RunResult(Status status, String flowId, String runId, String endStateId, List<String> path,
+                     Map<String, Integer> interceptorCounts, long durationMs, String message,
+                     List<TraceEvent> trace, int droppedTraceEvents) {
         this.status = status;
         this.flowId = flowId;
+        this.runId = runId;
         this.endStateId = endStateId;
         this.path = Collections.unmodifiableList(new ArrayList<>(path));
         this.interceptorCounts = Collections.unmodifiableMap(new LinkedHashMap<>(interceptorCounts));
         this.durationMs = durationMs;
         this.message = message;
+        this.trace = Collections.unmodifiableList(new ArrayList<>(trace));
+        this.droppedTraceEvents = droppedTraceEvents;
     }
 
     /** 没有真正开始运行就结束的结果，例如 BUSY、SERVICE_UNAVAILABLE。 */
@@ -70,6 +83,11 @@ public final class RunResult {
 
     public String getFlowId() {
         return flowId;
+    }
+
+    /** 本次运行的编号，例如 {@code demo.claim#3}，日志里每一行都带着它；没有开始运行时为 null。 */
+    public String getRunId() {
+        return runId;
     }
 
     /** 结束时所在的状态：终止状态的 id，或超时/失败时停留的状态；还没进入任何状态时为 null。 */
@@ -96,9 +114,40 @@ public final class RunResult {
         return message;
     }
 
+    /**
+     * 运行轨迹：每一步做了什么、为什么。完整记录，不受日志级别影响。
+     *
+     * <p>最多保留 1000 条，超出时保留开头 100 条和最近的记录，中间丢弃的条数见 {@link #getDroppedTraceEvents()}。
+     */
+    public List<TraceEvent> getTrace() {
+        return trace;
+    }
+
+    public int getDroppedTraceEvents() {
+        return droppedTraceEvents;
+    }
+
+    /** 把结果和完整轨迹格式化成多行文本，便于上报或保存。 */
+    public String formatTrace() {
+        StringBuilder sb = new StringBuilder("run ").append(runId != null ? runId : flowId)
+                .append(' ').append(status).append(" in ").append(TraceEvent.formatSeconds(durationMs))
+                .append(", path=").append(path);
+        if (message != null) {
+            sb.append("\nmessage: ").append(message);
+        }
+        if (droppedTraceEvents > 0) {
+            sb.append("\n(").append(droppedTraceEvents).append(" events in the middle were dropped)");
+        }
+        for (TraceEvent event : trace) {
+            sb.append('\n').append(event);
+        }
+        return sb.toString();
+    }
+
     @Override
     public String toString() {
-        return "RunResult{status=" + status + ", flow=" + flowId + ", end=" + endStateId + ", path=" + path
+        return "RunResult{status=" + status + ", run=" + (runId != null ? runId : flowId) + ", end=" + endStateId
+                + ", path=" + path
                 + ", interceptors=" + interceptorCounts + ", durationMs=" + durationMs
                 + (message != null ? ", message=" + message : "") + "}";
     }

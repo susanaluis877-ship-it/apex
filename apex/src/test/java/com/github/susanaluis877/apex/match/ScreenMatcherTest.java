@@ -14,6 +14,7 @@ import static com.github.susanaluis877.apex.testutil.Trees.screen;
 import static com.github.susanaluis877.apex.testutil.Trees.text;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -105,6 +106,24 @@ public class ScreenMatcherTest {
         assertEquals(custom(c).hashCode(), custom(c).hashCode());
         assertFalse(custom(c).equals(custom(s -> true)));
         assertEquals("custom(<inline>)", custom(c).toString());
+    }
+
+    @Test
+    public void explainsEveryMatcherKind() {
+        assertNull(allOf(pkg("com.foo"), has(By.text("首页"))).explainMismatch(screen));
+        assertEquals("package=\"com.bar\": screen package is \"com.foo\"", pkg("com.bar").explainMismatch(screen));
+        assertEquals("activity=\"LoginActivity\": current activity is \"com.foo.ui.HomeActivity\"",
+                activity("LoginActivity").explainMismatch(screen));
+        assertEquals("has{text=\"设置\"}: no node matches (text=\"设置\": 0 node(s))",
+                has(By.text("设置")).explainMismatch(screen));
+        assertEquals("not(has{text=\"首页\"}): the inner condition matched",
+                not(has(By.text("首页"))).explainMismatch(screen));
+        assertEquals("allOf 报告第一个不满足的条件", "package=\"com.bar\": screen package is \"com.foo\"",
+                allOf(has(By.text("首页")), pkg("com.bar"), pkg("com.baz")).explainMismatch(screen));
+        assertEquals("none of anyOf: package=\"com.bar\": screen package is \"com.foo\""
+                        + " | custom(<inline>) returned false",
+                anyOf(pkg("com.bar"), custom(s -> false)).explainMismatch(screen));
+        assertNull(always().explainMismatch(screen));
     }
 
     @Test(expected = IllegalStateException.class)

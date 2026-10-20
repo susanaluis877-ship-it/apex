@@ -16,10 +16,13 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import com.github.susanaluis877.apex.ApexLogger;
 import com.github.susanaluis877.apex.FlowListener;
 import com.github.susanaluis877.apex.RunResult;
 import com.github.susanaluis877.apex.RunResult.Status;
+import com.github.susanaluis877.apex.TraceEvent;
 import com.github.susanaluis877.apex.flow.Flow;
+import com.github.susanaluis877.apex.internal.ApexLog;
 import com.github.susanaluis877.apex.internal.Registry;
 import com.github.susanaluis877.apex.match.By;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
@@ -58,6 +61,7 @@ public class FlowEngineTest {
     @After
     public void tearDown() {
         Registry.get().clear();
+        ApexLog.configure(ApexLogger.LOGCAT, ApexLogger.WARN);
     }
 
     /** 被自动化的假 App：首页 → 任务页（可能有广告弹窗）→ 完成页，或首页 → 售罄页。 */
@@ -135,7 +139,8 @@ public class FlowEngineTest {
     }
 
     private RunResult run(Flow flow) {
-        return new FlowEngine(flow, device, device, device, device, listener, EngineConfig.DEFAULT).run();
+        return new FlowEngine(flow.getId() + "#1", flow, device, device, device, device, listener,
+                EngineConfig.DEFAULT).run();
     }
 
     // ---- 基本路径 ----
@@ -429,6 +434,126 @@ public class FlowEngineTest {
         RunResult r = run(flow);
         assertEquals(Status.ERROR, r.getStatus());
         assertTrue(r.getMessage(), r.getMessage().contains("inline bug"));
+    }
+
+    // ---- 运行轨迹与日志 ----
+
+    @Test
+    public void traceRecordsEveryStepWithDetails() {
+        RunResult r = run(demo(2).build());
+        assertEquals("demo#1", r.getRunId());
+        assertEquals(Arrays.asList("RUN_START", "STATE_ENTER", "ACTION", "STATE_ENTER", "ACTION", "STATE_ENTER",
+                "RUN_END"), types(r));
+        TraceEvent start = r.getTrace().get(0);
+        assertEquals("flow demo: start 'home', states [home, task, done, sold_out], interceptors [close_ad],"
+                + " timeout 300.000s, maxSteps 100", start.getMessage());
+        TraceEvent click = first(r, TraceEvent.Type.ACTION);
+        assertEquals("home", click.getStateId());
+        assertTrue(click.getMessage(), click.getMessage().startsWith("home 1/1 click{id=\"start\"} -> OK in 0ms: "
+                + "ACTION_CLICK on Button id=com.foo:id/start text=\"Start\""));
+        TraceEvent enter = r.getTrace().get(3);
+        assertTrue(enter.getMessage(), enter.getMessage().startsWith("task (step 2) on screen seq="));
+        TraceEvent end = r.getTrace().get(r.getTrace().size() - 1);
+        assertEquals(ApexLogger.INFO, end.getPriority());
+        assertTrue(end.getMessage(), end.getMessage().startsWith("SUCCESS at 'done' in "));
+        assertTrue(r.formatTrace(), r.formatTrace().startsWith("run demo#1 SUCCESS in "));
+        assertTrue(r.formatTrace(), r.formatTrace().contains("\n+0.000s RUN_START   flow demo: start 'home'"));
+    }
+
+    @Test
+    public void timeoutTraceExplainsWhyAndDumpsLastScreen() {
+        app.claimEnabled = false;
+        RunResult r = run(demo(2).build());
+        assertEquals(Status.TIMEOUT, r.getStatus());
+        String reason = "task: has{id=\"claim\", enabled=true}: 1 node(s) match all but enabled=true";
+        TraceEvent wait = first(r, TraceEvent.Type.WAIT);
+        assertTrue(wait.getMessage(), wait.getMessage().startsWith("next of 'home' [task, sold_out] (0."));
+        assertTrue(wait.getMessage(), wait.getMessage().contains("; left 'home' (has{id=\"start\"}: "));
+        assertTrue(wait.getMessage(), wait.getMessage().contains(reason));
+        assertTrue(wait.getMessage(), wait.getMessage().contains("; sold_out: has{text=\"Sold out\"}: no node"));
+        assertTrue("结果说明里也要有原因：" + r.getMessage(), r.getMessage().contains(reason));
+        TraceEvent dump = first(r, TraceEvent.Type.SCREEN_DUMP);
+        assertTrue(dump.getMessage(), dump.getMessage().contains("Button id=com.foo:id/claim text=\"Claim\""));
+        assertTrue(dump.getMessage(), dump.getMessage().contains("disabled"));
+        assertEquals(ApexLogger.WARN, r.getTrace().get(r.getTrace().size() - 1).getPriority());
+    }
+
+    @Test
+    public void unchangedScreenIsTracedOnlyOnHeartbeat() {
+        app.page = "elsewhere";
+        RunResult r = run(demo(2).build());
+        long waits = r.getTrace().stream().filter(e -> e.getType() == TraceEvent.Type.WAIT).count();
+        assertTrue("10 秒内页面不变，应只有开头和心跳几条，实际 " + waits, waits >= 2 && waits <= 3);
+        assertTrue(first(r, TraceEvent.Type.WAIT).getMessage().startsWith("start 'home' (0.000s/10.000s)"));
+    }
+
+    @Test
+    public void retriesInterceptorsAndCoolingAreTraced() {
+        app.ad = true;
+        app.adSticky = true;
+        RunResult r = run(demo(2).build());
+        assertEquals(Status.SUCCESS, r.getStatus());
+        assertTrue(first(r, TraceEvent.Type.INTERCEPTOR).getMessage().startsWith("close_ad (1/3) on screen seq="));
+        assertTrue(r.formatTrace(), r.formatTrace().contains("close_ad still matches, cooling down "));
+        assertTrue(r.formatTrace(), r.formatTrace().contains("interceptor close_ad 1/1 click{id=\"ad_close\"} -> OK"));
+    }
+
+    @Test
+    public void retryAndResumeAreTraced() {
+        app.claimClicksToIgnore = 1;
+        RunResult r = run(demo(2).build());
+        assertTrue(first(r, TraceEvent.Type.RETRY).getMessage().startsWith("task 1/2: screen unchanged for 3."));
+
+        device.show(screen(frame(button("a", "A"))));
+        device.after(1_000, () -> device.show(screen(frame(button("a", "A"), button("b", "B")))));
+        device.onClick("b", () -> device.show(screen(frame(text("finished")))));
+        Flow flow = new Flow.Builder("resume").start("form")
+                .state("form", s -> s.match(has(By.id("a"))).action(click(By.id("a")), click(By.id("b")))
+                        .next("end"))
+                .state("end", s -> s.match(has(By.text("finished"))).endSuccess())
+                .build();
+        r = run(flow);
+        assertEquals("form from action 2/2 (last attempt: target not found: no node matches (id=\"b\": 0 node(s)))",
+                first(r, TraceEvent.Type.RESUME).getMessage());
+    }
+
+    @Test
+    public void loggerReceivesPrefixedLinesFilteredByLevel() {
+        List<String> lines = new ArrayList<>();
+        ApexLog.configure((priority, tag, message, throwable) -> lines.add(priority + " " + tag + " " + message),
+                ApexLogger.INFO);
+        run(demo(2).build());
+        assertEquals("INFO 级别只有开始、进入状态和结束", 5, lines.size());
+        for (String line : lines) {
+            assertTrue(line, line.startsWith("4 Apex [demo#1] +"));
+        }
+        assertTrue(lines.get(1), lines.get(1).contains(" STATE_ENTER home (step 1)"));
+
+        lines.clear();
+        ApexLog.configure((priority, tag, message, throwable) -> lines.add(message), ApexLogger.VERBOSE);
+        app.page = "home";
+        run(demo(2).build());
+        assertTrue(lines.toString(), lines.get(1).startsWith("[demo#1] +0.000s tick 1: screen seq="));
+        assertTrue(lines.stream().anyMatch(l -> l.contains(" ACTION      home 1/1 click")));
+    }
+
+    private static List<String> types(RunResult r) {
+        List<String> types = new ArrayList<>();
+        for (TraceEvent e : r.getTrace()) {
+            if (e.getType() != TraceEvent.Type.WAIT) {
+                types.add(e.getType().name());
+            }
+        }
+        return types;
+    }
+
+    private static TraceEvent first(RunResult r, TraceEvent.Type type) {
+        for (TraceEvent e : r.getTrace()) {
+            if (e.getType() == type) {
+                return e;
+            }
+        }
+        throw new AssertionError("no " + type + " in\n" + r.formatTrace());
     }
 
     @Test

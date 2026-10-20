@@ -118,6 +118,7 @@ public final class Apex {
             return;
         }
         Registry.get().registerAction(name, action);
+        ApexLog.d("registered custom action '" + name + "'");
     }
 
     /**
@@ -129,6 +130,7 @@ public final class Apex {
             return;
         }
         Registry.get().registerMatcher(name, matcher);
+        ApexLog.d("registered custom matcher '" + name + "'");
     }
 
     /**

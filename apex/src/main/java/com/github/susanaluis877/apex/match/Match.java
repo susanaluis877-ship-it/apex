@@ -117,6 +117,10 @@ public final class Match {
         return new Custom(Objects.requireNonNull(name, "name"), args);
     }
 
+    private static String quote(String s) {
+        return s == null ? "null" : '"' + s + '"';
+    }
+
     private static final class Package extends ScreenMatcher {
         private final String packageName;
 
@@ -127,6 +131,11 @@ public final class Match {
         @Override
         public boolean matches(ScreenSnapshot screen) {
             return packageName.equals(screen.getPackageName());
+        }
+
+        @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return matches(screen) ? null : this + ": screen package is " + quote(screen.getPackageName());
         }
 
         @Override
@@ -172,6 +181,11 @@ public final class Match {
         }
 
         @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return matches(screen) ? null : this + ": current activity is " + quote(screen.getActivity());
+        }
+
+        @Override
         public void collectCustomNames(Set<String> out) {
         }
 
@@ -204,6 +218,12 @@ public final class Match {
         }
 
         @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            String why = selector.explainMismatch(screen);
+            return why == null ? null : this + ": " + why;
+        }
+
+        @Override
         public void collectCustomNames(Set<String> out) {
         }
 
@@ -233,6 +253,11 @@ public final class Match {
         @Override
         public boolean matches(ScreenSnapshot screen) {
             return !matcher.matches(screen);
+        }
+
+        @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return matches(screen) ? null : this + ": the inner condition matched";
         }
 
         @Override
@@ -271,6 +296,17 @@ public final class Match {
                 }
             }
             return true;
+        }
+
+        @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            for (ScreenMatcher m : items) {
+                String why = m.explainMismatch(screen);
+                if (why != null) {
+                    return why;
+                }
+            }
+            return null;
         }
 
         @Override
@@ -314,6 +350,19 @@ public final class Match {
         }
 
         @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            List<String> reasons = new ArrayList<>(items.size());
+            for (ScreenMatcher m : items) {
+                String why = m.explainMismatch(screen);
+                if (why == null) {
+                    return null;
+                }
+                reasons.add(why);
+            }
+            return "none of anyOf: " + String.join(" | ", reasons);
+        }
+
+        @Override
         public void collectCustomNames(Set<String> out) {
             for (ScreenMatcher m : items) {
                 m.collectCustomNames(out);
@@ -345,6 +394,11 @@ public final class Match {
         }
 
         @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return null;
+        }
+
+        @Override
         public void collectCustomNames(Set<String> out) {
         }
 
@@ -364,6 +418,11 @@ public final class Match {
         @Override
         public boolean matches(ScreenSnapshot screen) {
             return condition.test(screen);
+        }
+
+        @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return matches(screen) ? null : this + " returned false";
         }
 
         @Override
@@ -404,6 +463,11 @@ public final class Match {
                 throw new IllegalStateException("custom matcher '" + name + "' is not registered");
             }
             return matcher.matches(screen, args);
+        }
+
+        @Override
+        public String explainMismatch(ScreenSnapshot screen) {
+            return matches(screen) ? null : this + " returned false";
         }
 
         @Override

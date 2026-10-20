@@ -100,6 +100,35 @@ public class SelectorTest {
         assertEquals(By.textMatches("a+"), By.textMatches("a+"));
     }
 
+    @Test
+    public void explainsNearMiss() {
+        ScreenSnapshot screen = screen(frame(text("Task"), button("claim", "Loading").enabled(false)));
+        assertNull(By.id("claim").explainMismatch(screen));
+        assertEquals("1 node(s) match all but enabled=true, e.g. Button id=com.foo:id/claim text=\"Loading\""
+                        + " [100,200][300,260] (enabled=false)",
+                By.id("claim").enabled(true).explainMismatch(screen));
+        assertEquals("1 node(s) match all but text=\"Claim\", e.g. Button id=com.foo:id/claim text=\"Loading\""
+                        + " [100,200][300,260] (text=\"Loading\")",
+                By.id("claim").text("Claim").explainMismatch(screen));
+    }
+
+    @Test
+    public void explainsInvisibleTarget() {
+        ScreenSnapshot screen = screen(frame(button("ok", "OK").visible(false)));
+        String why = By.text("OK").explainMismatch(screen);
+        assertTrue(why, why.startsWith("1 node(s) match all but visible=true"));
+        assertTrue(why, why.endsWith("(visible=false)"));
+    }
+
+    @Test
+    public void explainsMissingNodeWithIdentityCounts() {
+        ScreenSnapshot screen = screen(frame(text("Home"), button("start", "Start")));
+        assertEquals("no node matches (text=\"Sold out\": 0 node(s))", By.text("Sold out").explainMismatch(screen));
+        // 两个文本类条件分别命中，但没有节点同时满足，而且差的不止一个条件
+        assertEquals("no node matches (text=\"Home\": 1 node(s), id=\"start\": 1 node(s))",
+                By.text("Home").id("start").enabled(false).explainMismatch(screen));
+    }
+
     @Test(expected = PatternSyntaxException.class)
     public void badRegexFailsFast() {
         By.textMatches("(");

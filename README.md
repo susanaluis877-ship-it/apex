@@ -27,7 +27,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.2.1")
+    implementation("com.github.susanaluis877-ship-it:apex:0.3.0")
 }
 ```
 
@@ -122,7 +122,67 @@ RunHandle handle = Apex.run(flow, result -> Log.i("Apex", "finished: " + result)
 | `BUSY` / `NOT_INITIALIZED` / `INVALID_ARGUMENT` | 没能开始运行 |
 | `ERROR` | 自定义动作或条件抛出了异常 |
 
-除此之外还有 `getPath()`（依次进入的状态）、`getInterceptorCounts()`、`getDurationMs()`、`getMessage()`。
+除此之外还有 `getPath()`（依次进入的状态）、`getInterceptorCounts()`、`getDurationMs()`、`getMessage()`，以及下面的运行轨迹。
+
+### 日志与运行轨迹
+
+每次运行的每一步都会记成一条 `TraceEvent`：
+
+| 类型 | 记录内容 |
+|---|---|
+| `RUN_START` / `RUN_END` | 流程概况；结束状态、耗时、路径、拦截器次数和原因 |
+| `STATE_ENTER` | 进入哪个状态、第几步、当时的屏幕概况 |
+| `ACTION` | 哪个状态的第几个动作、点了哪个节点、用的节点动作还是手势、坐标、结果和耗时 |
+| `INTERCEPTOR` | 拦截器触发第几次；匹配但还在冷却时也会记录 |
+| `WAIT` | 在等哪些状态，以及每个候选状态为什么还没匹配。页面有变化时记一次，页面不变时每 5 秒记一次 |
+| `RETRY` / `RESUME` | 为什么重试（页面多久没变化）、从第几个动作续跑、上次失败的原因 |
+| `SERVICE` / `SNAPSHOT` | 服务断开或恢复；快照超出上限被跳过 |
+| `SCREEN_DUMP` | 没有成功结束（超时、动作失败、步数超限、服务断开、出错）时最后一屏的节点树 |
+
+轨迹会完整记录在 `RunResult` 里，不受日志级别影响；最多 1000 条，超出时保留开头和最近的记录。`formatTrace()` 可以把它格式化成文本上报：
+
+```
+run demo.claim#3 TIMEOUT in 10.200s, path=[home]
++0.000s RUN_START   flow demo.claim: start 'home', states [home, task, done, sold_out], interceptors [close_ad], ...
++0.000s STATE_ENTER home (step 1) on screen seq=2 pkg=com.foo activity=HomeActivity windows=1 nodes=12
++0.000s ACTION      home 1/1 click{id="demo_start"} -> OK in 12ms: ACTION_CLICK on Button id=com.foo:id/demo_start ...
++0.200s WAIT        next of 'home' [task, sold_out] (0.200s/10.000s, retries 0/2); left 'home' (...);
+                    task: has{id="demo_claim", enabled=true}: 1 node(s) match all but enabled=true, e.g. Button ... (enabled=false);
+                    sold_out: has{text="Sold out"}: no node matches (text="Sold out": 0 node(s))
++10.200s SCREEN_DUMP last screen: ...
++10.200s RUN_END     TIMEOUT at 'home' in 10.200s, ...
+```
+
+同样的内容也会输出到日志，每一行带 `[flowId#运行编号 +耗时]` 前缀，方便在 logcat 里按一次运行过滤。日志的级别和去向可以在 `ApexConfig` 里设置：
+
+```java
+Apex.init(this, new ApexConfig.Builder()
+        .setDebug(BuildConfig.DEBUG)          // debug 时默认 DEBUG 级，否则只输出 WARN 及以上
+        .setLogLevel(ApexLogger.VERBOSE)      // 可选：VERBOSE 会额外输出每一轮的快照概况
+        .setLogger((priority, tag, message, throwable) -> {
+            // 接管 SDK 的所有日志：写文件、接 Timber、上报都可以。需要保留 logcat 时再转给 ApexLogger.LOGCAT
+            ApexLogger.LOGCAT.log(priority, tag, message, throwable);
+        })
+        .build());
+```
+
+| 级别 | 内容 |
+|---|---|
+| ERROR | 动作硬失败、自定义代码抛异常、流程以 ERROR 结束 |
+| WARN | 超时、步数超限、服务断开、快照被跳过 |
+| INFO | 流程开始和结束、进入状态、拦截器触发、重试 |
+| DEBUG | 每个动作的细节、等待原因、续跑、拦截器冷却、失败时的节点树 |
+| VERBOSE | 每一轮的快照概况和抓取耗时（只进日志，不进轨迹） |
+
+日志接收器可能在任意线程调用，需要线程安全且尽快返回。
+
+编写或调试选择器时，也可以直接问它为什么没匹配：
+
+```java
+String why = By.id("demo_claim").enabled(true).explainMismatch(screen);
+// "1 node(s) match all but enabled=true, e.g. Button id=...:id/demo_claim ... (enabled=false)"
+String why2 = Match.allOf(pkg("com.foo"), has(By.text("领取"))).explainMismatch(screen);  // 匹配时返回 null
+```
 
 ## JSON 格式
 
@@ -358,7 +418,7 @@ adb shell am start -n com.github.susanaluis877.apex.demo/.MainActivity --es auto
 
 ## 本地构建
 
-需要 JDK 17+ 和 Android SDK（platform 36）。
+需要 JDK 21（由 `gradle/gradle-daemon-jvm.properties` 指定，Gradle 会自动在本机查找）和 Android SDK（platform 36）。
 
 ```bash
 ./gradlew :apex:test                     # 单元测试（引擎、匹配、解析都在 JVM 上跑）

@@ -15,6 +15,13 @@ public abstract class ScreenMatcher {
     public abstract boolean matches(ScreenSnapshot screen);
 
     /**
+     * 说明当前屏幕为什么不匹配，用于日志和运行轨迹；匹配时返回 null。
+     *
+     * <p>会再次执行条件（包括自定义条件），只在需要解释时调用。
+     */
+    public abstract String explainMismatch(ScreenSnapshot screen);
+
+    /**
      * 收集条件树里引用的自定义条件名，用于构建流程时校验是否已注册。
      */
     public abstract void collectCustomNames(Set<String> out);

@@ -26,6 +26,11 @@ public final class ActionResult {
         this.message = message;
     }
 
+    /** 成功，并说明实际做了什么，例如 {@code ACTION_CLICK on Button ...}。 */
+    public static ActionResult ok(String detail) {
+        return new ActionResult(Status.OK, detail);
+    }
+
     public static ActionResult soft(String message) {
         return new ActionResult(Status.SOFT_FAIL, message);
     }
@@ -50,6 +55,7 @@ public final class ActionResult {
         return status == Status.OK;
     }
 
+    /** 失败原因；成功时是执行细节，可能为 null。 */
     public String getMessage() {
         return message;
     }

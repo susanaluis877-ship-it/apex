@@ -153,7 +153,10 @@ public class MainActivity extends Activity {
 
             @Override
             public void onFinished(RunResult result) {
-                append("结束：" + result);
+                // 没有成功时显示完整轨迹：每一步做了什么、为什么在等、最后一屏的节点树
+                append(result.isSuccess() || result.getStatus() == RunResult.Status.FAILURE
+                        ? "结束：" + result
+                        : result.formatTrace());
                 Log.i(TAG, "finished status=" + result.getStatus() + " path=" + result.getPath()
                         + " interceptors=" + result.getInterceptorCounts() + " message=" + result.getMessage());
                 Toast.makeText(MainActivity.this, "Apex: " + result.getStatus(), Toast.LENGTH_SHORT).show();
