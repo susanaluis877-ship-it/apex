@@ -27,7 +27,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.3.0")
+    implementation("com.github.susanaluis877-ship-it:apex:0.3.1")
 }
 ```
 
@@ -291,7 +291,7 @@ try {
 | `back` / `home` / `recents` / `notifications` | 无 | `back()` 等 |
 | `launchApp` | `package` | `launchApp("com.foo")` |
 | `sleep` | `ms` | `sleep(1000)` |
-| `custom` | `name`、可选 `args` | `custom(name, args)` |
+| `custom` | `name`、可选 `args` | `custom(name, args)`；DSL 里还可以直接传函数 `run(ctx -> ...)`，见下文 |
 
 所有动作都可以加两个参数：
 
@@ -326,6 +326,47 @@ try {
 - **运行环境。** 函数在引擎线程上执行，每一轮可能调用多次。不要在里面做耗时操作或修改界面；抛出异常时流程以 `ERROR` 结束。
 - **只能在 DSL 里用。** JSON 没法写函数，JSON 流程要用下面按名字注册的方式。
 
+### 用代码写动作
+
+内置动作不够用时，可以把一个函数传给 `run(...)`。函数拿到 `ActionContext`，返回 true 表示成功：
+
+```java
+.state("coupons", s -> s
+        .match(has(By.text("领券中心")))
+        .action(run(ctx -> {
+            // 依次点掉页面上所有“领取”按钮
+            for (UiNode node : By.text("领取").findAll(ctx.screen())) {
+                if (ctx.isCancelled() || !ctx.click(node)) {
+                    return false;
+                }
+                ctx.sleep(300);
+            }
+            ctx.refresh();
+            return By.text("领取").findFirst(ctx.screen()) == null;
+        }))
+        .next("done"))
+```
+
+`ActionContext` 提供这些方法：
+
+| 方法 | 作用 |
+|---|---|
+| `screen()` | 当前快照 |
+| `refresh()` | 重新抓一次快照，之后 `screen()` 返回新的 |
+| `click(node)` | 点击节点：先用节点动作，不行再用手势 |
+| `perform(action)` | 执行任意内置动作，例如 `ctx.perform(swipeRatio(0.5, 0.8, 0.5, 0.2))` |
+| `sleep(ms)` | 等待，流程被取消时提前返回 |
+| `isCancelled()` | 流程是否已被取消 |
+
+几点说明：
+
+- **返回值。** 返回 false 是软失败：引擎会在页面变化后，或页面不变时过了重试间隔，从这个动作开始续跑。抛出异常时流程以 `ERROR` 结束。
+- **运行环境。** 函数在引擎线程上同步执行，可以阻塞，但循环里要检查 `isCancelled()`。
+- **轨迹。** 函数里通过 `click`、`perform` 做的每个操作都会记进运行轨迹。
+- **不能嵌套。** `run(...)` 和 `custom(...)` 不能在函数里再通过 `perform` 执行。
+- **只能在 DSL 里用。** JSON 流程要用下面按名字注册的方式。
+- **方法名冲突。** 如果构建流程的那个类自己有 `run` 方法（例如实现了 `Runnable`），它会盖住静态导入的 `run`，这时要写成 `Actions.run(...)`。
+
 ### 按名字注册
 
 需要在 JSON 里引用，或者要在多个流程里复用时，按名字注册。必须先注册，再构建或解析引用它们的流程：
@@ -346,7 +387,9 @@ Apex.registerAction("tapAllCoupons", (ctx, args) -> {
 });
 ```
 
-自定义动作在引擎线程上同步执行，抛出异常时流程以 `ERROR` 结束。`ActionContext` 还提供 `refresh()`（重新抓快照）和 `perform(Action)`（执行内置动作）。
+注册的条件和动作，与上面直接传函数的写法遵循同样的规则：返回值、异常、`ActionContext` 都一样。
+
+`Match.custom` 和 `Actions.custom` 都有接收名字的版本。两个类都静态导入时，`custom("名字")` 有歧义，要写成 `Match.custom("名字")` 或 `Actions.custom("名字")`。
 
 ## 编写选择器
 

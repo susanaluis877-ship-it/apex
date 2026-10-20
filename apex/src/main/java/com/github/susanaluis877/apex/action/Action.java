@@ -436,6 +436,40 @@ public abstract class Action {
         }
     }
 
+    /** 用代码写的动作，见 {@link Actions#run(ActionFunction)}。 */
+    public static final class Inline extends Action {
+        private final ActionFunction function;
+
+        Inline(ActionFunction function, boolean optional, long delayMs) {
+            super(optional, delayMs);
+            this.function = Objects.requireNonNull(function, "function");
+        }
+
+        public ActionFunction getFunction() {
+            return function;
+        }
+
+        @Override
+        Action copy(boolean optional, long delayMs) {
+            return new Inline(function, optional, delayMs);
+        }
+
+        @Override
+        String describe() {
+            return "run(<inline>)";
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Inline && baseEquals((Inline) o) && function == ((Inline) o).function;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(baseHash(), System.identityHashCode(function));
+        }
+    }
+
     /** 引用通过 {@code Apex.registerAction} 注册的自定义动作。 */
     public static final class Custom extends Action {
         private final String name;

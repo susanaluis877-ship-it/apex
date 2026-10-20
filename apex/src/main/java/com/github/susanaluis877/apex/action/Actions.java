@@ -102,6 +102,15 @@ public final class Actions {
         return new Action.Sleep(ms, false, 0);
     }
 
+    /**
+     * 用代码写的动作，函数拿到 {@link ActionContext}，可以读取快照、点击节点、执行内置动作、等待。
+     * 返回 true 表示成功，false 表示软失败。只能在 Java DSL 里使用；两个这样的动作只有是同一个函数对象时才相等。
+     */
+    public static Action run(ActionFunction function) {
+        return new Action.Inline(function, false, 0);
+    }
+
+    /** 引用通过 {@code Apex.registerAction} 注册的自定义动作，JSON 里的 {@code "custom"} 对应这个写法。 */
     public static Action custom(String name) {
         return custom(name, Collections.emptyMap());
     }

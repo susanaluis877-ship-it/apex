@@ -436,6 +436,79 @@ public class FlowEngineTest {
         assertTrue(r.getMessage(), r.getMessage().contains("inline bug"));
     }
 
+    // ---- 用代码写的动作 ----
+
+    @Test
+    public void inlineActionUsesContextAndIsTraced() {
+        Flow flow = new Flow.Builder("run").start("home")
+                .state("home", s -> s.match(has(By.id("start")))
+                        .action(com.github.susanaluis877.apex.action.Actions.run(ctx -> {
+                            UiNode start = By.id("start").findFirst(ctx.screen());
+                            return start != null && ctx.click(start);
+                        }))
+                        .next("task"))
+                .state("task", s -> s.match(has(By.id("claim"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(r.formatTrace(), Status.SUCCESS, r.getStatus());
+        assertEquals(Collections.singletonList("click:start"), device.log);
+        assertTrue(r.formatTrace(), r.formatTrace().contains(
+                "ACTION        run(<inline>) > click Button id=com.foo:id/start text=\"Start\" [100,200][300,260] -> OK"));
+        assertTrue(r.formatTrace(), r.formatTrace().contains(
+                "ACTION      home 1/1 run(<inline>) -> OK in 0ms: run(<inline>) returned true"));
+    }
+
+    @Test
+    public void inlineActionReturningFalseIsResumedLater() {
+        int[] calls = {0};
+        device.show(screen(frame(button("a", "A"))));
+        device.after(2_000, () -> device.show(screen(frame(button("a", "A"), button("b", "B")))));
+        device.onClick("b", () -> device.show(screen(frame(text("finished")))));
+        Flow flow = new Flow.Builder("run").start("form")
+                .state("form", s -> s.match(has(By.id("a")))
+                        .action(com.github.susanaluis877.apex.action.Actions.run(ctx -> {
+                            calls[0]++;
+                            return ctx.perform(click(By.id("b")));
+                        }))
+                        .next("end"))
+                .state("end", s -> s.match(has(By.text("finished"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(r.formatTrace(), Status.SUCCESS, r.getStatus());
+        assertEquals(Collections.singletonList("click:b"), device.log);
+        assertTrue("页面没变时不应每轮都重跑，实际调用 " + calls[0] + " 次", calls[0] >= 2 && calls[0] <= 3);
+        assertTrue(first(r, TraceEvent.Type.RESUME).getMessage().endsWith("(last attempt: run(<inline>) returned false)"));
+    }
+
+    @Test
+    public void inlineActionExceptionEndsWithError() {
+        Flow flow = new Flow.Builder("run").start("home")
+                .state("home", s -> s.match(has(By.id("start")))
+                        .action(com.github.susanaluis877.apex.action.Actions.run(ctx -> {
+                            throw new IllegalStateException("boom");
+                        }).optional())
+                        .next("task"))
+                .state("task", s -> s.match(has(By.id("claim"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.ERROR, r.getStatus());
+        assertEquals("run(<inline>) threw java.lang.IllegalStateException: boom", r.getMessage());
+    }
+
+    @Test
+    public void inlineActionsCannotBeNested() {
+        Flow flow = new Flow.Builder("run").start("home")
+                .state("home", s -> s.match(has(By.id("start")))
+                        .action(com.github.susanaluis877.apex.action.Actions.run(ctx ->
+                                ctx.perform(com.github.susanaluis877.apex.action.Actions.run(inner -> true))))
+                        .next("task"))
+                .state("task", s -> s.match(has(By.id("claim"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.ERROR, r.getStatus());
+        assertTrue(r.getMessage(), r.getMessage().endsWith("custom and run(...) actions cannot be nested"));
+    }
+
     // ---- 运行轨迹与日志 ----
 
     @Test

@@ -4,6 +4,7 @@ import com.github.susanaluis877.apex.ApexLogger;
 import com.github.susanaluis877.apex.TraceEvent;
 import com.github.susanaluis877.apex.action.Action;
 import com.github.susanaluis877.apex.action.ActionContext;
+import com.github.susanaluis877.apex.action.ActionFunction;
 import com.github.susanaluis877.apex.action.Actions;
 import com.github.susanaluis877.apex.action.Coord;
 import com.github.susanaluis877.apex.action.CustomAction;
@@ -94,7 +95,16 @@ final class ActionRunner {
             return waiter.isCancelled() ? ActionResult.cancelled() : ActionResult.ok("slept " + ms + "ms");
         }
         if (action instanceof Action.Custom) {
-            return custom((Action.Custom) action, screen, stateId);
+            Action.Custom custom = (Action.Custom) action;
+            CustomAction registered = Registry.get().action(custom.getName());
+            if (registered == null) {
+                return ActionResult.error("custom action '" + custom.getName() + "' is not registered");
+            }
+            return invoke("custom '" + custom.getName() + "'", screen, stateId,
+                    ctx -> registered.perform(ctx, custom.getArgs()));
+        }
+        if (action instanceof Action.Inline) {
+            return invoke("run(<inline>)", screen, stateId, ((Action.Inline) action).getFunction());
         }
         return ActionResult.error("unsupported action: " + action);
     }
@@ -162,21 +172,16 @@ final class ActionRunner {
                 "ACTION_SCROLL_" + scroll.getDirection() + " on " + node);
     }
 
-    private ActionResult custom(Action.Custom action, ScreenSnapshot screen, String stateId) {
-        CustomAction custom = Registry.get().action(action.getName());
-        if (custom == null) {
-            return ActionResult.error("custom action '" + action.getName() + "' is not registered");
-        }
-        Context context = new Context(screen, stateId, action.getName());
+    /** 执行宿主代码（注册的自定义动作或内联函数）：true 成功，false 软失败，异常结束流程。 */
+    private ActionResult invoke(String label, ScreenSnapshot screen, String stateId, ActionFunction function) {
+        Context context = new Context(screen, stateId, label);
         try {
-            if (custom.perform(context, action.getArgs())) {
-                return ActionResult.ok("custom '" + action.getName() + "' returned true");
+            if (function.perform(context)) {
+                return ActionResult.ok(label + " returned true");
             }
-            return waiter.isCancelled()
-                    ? ActionResult.cancelled()
-                    : ActionResult.soft("custom action '" + action.getName() + "' returned false");
+            return waiter.isCancelled() ? ActionResult.cancelled() : ActionResult.soft(label + " returned false");
         } catch (Exception e) {
-            return ActionResult.error("custom action '" + action.getName() + "' threw " + e);
+            return ActionResult.error(label + " threw " + e);
         }
     }
 
@@ -213,13 +218,13 @@ final class ActionRunner {
     private final class Context implements ActionContext {
 
         private final String stateId;
-        private final String name;
+        private final String label;
         private ScreenSnapshot screen;
 
-        Context(ScreenSnapshot screen, String stateId, String name) {
+        Context(ScreenSnapshot screen, String stateId, String label) {
             this.screen = screen;
             this.stateId = stateId;
-            this.name = name;
+            this.label = label;
         }
 
         @Override
@@ -238,8 +243,8 @@ final class ActionRunner {
 
         @Override
         public boolean perform(Action action) {
-            if (action instanceof Action.Custom) {
-                throw new IllegalArgumentException("nested custom actions are not supported");
+            if (action instanceof Action.Custom || action instanceof Action.Inline) {
+                throw new IllegalArgumentException("custom and run(...) actions cannot be nested");
             }
             return trace(action.toString(), run(action, screen, stateId));
         }
@@ -264,7 +269,7 @@ final class ActionRunner {
             boolean failed = r.getStatus() == ActionResult.Status.HARD_FAIL
                     || r.getStatus() == ActionResult.Status.ERROR;
             tracer.event(TraceEvent.Type.ACTION, failed ? ApexLogger.ERROR : ApexLogger.DEBUG, stateId,
-                    "  custom '" + name + "' > " + what + " -> " + r);
+                    "  " + label + " > " + what + " -> " + r);
             return r.isOk();
         }
     }

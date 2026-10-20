@@ -70,6 +70,13 @@ public class FlowBuilderTest {
         assertNotEquals(click(By.id("x")), a);
         assertEquals(tapRatio(0.5, 0.9), tapRatio(0.5, 0.9));
         assertEquals("click{id=\"x\"}?+200ms", a.toString());
+
+        com.github.susanaluis877.apex.action.ActionFunction fn = ctx -> true;
+        assertEquals(com.github.susanaluis877.apex.action.Actions.run(fn),
+                com.github.susanaluis877.apex.action.Actions.run(fn));
+        assertNotEquals(com.github.susanaluis877.apex.action.Actions.run(fn),
+                com.github.susanaluis877.apex.action.Actions.run(ctx -> true));
+        assertEquals("run(<inline>)?", com.github.susanaluis877.apex.action.Actions.run(fn).optional().toString());
     }
 
     @Test
