@@ -4,8 +4,8 @@
 #
 # 典型需要加规则的场景：
 # 1. SDK 通过反射或类名字符串访问的类
-#    -keep class com.example.apex.internal.SomeReflectiveClass { *; }
+#    -keep class com.github.susanaluis877.apex.internal.SomeReflectiveClass { *; }
 # 2. JNI 回调的 Java 方法（native 代码按名字查找）
 #    -keepclasseswithmembernames class * { native <methods>; }
 # 3. 需要 JSON 序列化的数据模型
-#    -keep class com.example.apex.model.** { <fields>; }
+#    -keep class com.github.susanaluis877.apex.model.** { <fields>; }

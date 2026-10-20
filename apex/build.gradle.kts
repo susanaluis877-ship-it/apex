@@ -15,7 +15,7 @@ group = sdkGroup
 version = sdkVersion
 
 android {
-    namespace = "com.example.apex"
+    namespace = "com.github.susanaluis877.apex"
     compileSdk = 36
     // 资源名必须带前缀，避免和宿主资源撞名
     resourcePrefix = "apex_"
@@ -23,7 +23,8 @@ android {
     enableKotlin = false
 
     defaultConfig {
-        minSdk = 21
+        // dispatchGesture（坐标点击/滑动）需要 API 24
+        minSdk = 24
         // 随 AAR 一起交给宿主的 keep 规则（AAR 内的 proguard.txt）
         consumerProguardFiles("consumer-rules.pro")
         buildConfigField("String", "SDK_VERSION", "\"$sdkVersion\"")
@@ -45,6 +46,11 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // 引擎等纯 Java 代码会经 ApexLog 调到 android.util.Log，JVM 单测里让它返回默认值而不是抛异常
+        unitTests.isReturnDefaultValues = true
+    }
+
     publishing {
         singleVariant("release") {
             withSourcesJar()
@@ -55,6 +61,7 @@ android {
 
 dependencies {
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }
 
 // AGP 在 afterEvaluate 阶段才创建 release 组件
@@ -68,7 +75,7 @@ afterEvaluate {
                 version = sdkVersion
                 pom {
                     name = "Apex"
-                    description = "A pure Java Android SDK with no third-party dependencies."
+                    description = "A pure Java Android automation framework built on AccessibilityService and state graphs."
                     url = "https://github.com/susanaluis877-ship-it/apex"
                     licenses {
                         license {

@@ -6,6 +6,7 @@
         android:allowBackup="false"
         android:label="Apex Demo">
 
+        <!-- 控制台：查看服务状态、运行流程 -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -14,5 +15,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 被自动化的目标页面 -->
+        <activity
+            android:name=".target.HomeActivity"
+            android:exported="false" />
+        <activity
+            android:name=".target.TaskActivity"
+            android:exported="false" />
+        <activity
+            android:name=".target.DoneActivity"
+            android:exported="false" />
     </application>
 </manifest>

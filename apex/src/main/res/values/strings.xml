@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="apex_sdk_name">Apex SDK</string>
+    <!-- 系统无障碍设置里显示的服务名和说明，宿主可以用同名资源覆盖 -->
+    <string name="apex_accessibility_label">Apex Automation</string>
+    <string name="apex_accessibility_description">Reads on-screen content and performs taps, swipes and text input to run the automation flows configured in this app.</string>
 </resources>

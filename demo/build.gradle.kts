@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.apex.demo"
+    namespace = "com.github.susanaluis877.apex.demo"
     compileSdk = 36
     enableKotlin = false
 
     defaultConfig {
-        applicationId = "com.example.apex.demo"
-        minSdk = 21
+        applicationId = "com.github.susanaluis877.apex.demo"
+        minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"

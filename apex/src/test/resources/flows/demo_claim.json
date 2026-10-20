@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "demo.claim",
+  "start": "home",
+  "timeoutMs": 60000,
+  "maxSteps": 20,
+  "defaults": { "timeoutMs": 10000, "retryIntervalMs": 3000, "maxRetries": 2 },
+  "states": [
+    {
+      "id": "home",
+      "match": { "package": "com.github.susanaluis877.apex.demo", "has": { "id": "demo_start" } },
+      "actions": [ { "type": "click", "target": { "id": "demo_start" } } ],
+      "next": ["task", "sold_out"]
+    },
+    {
+      "id": "task",
+      "match": { "has": { "id": "demo_claim", "enabled": true } },
+      "actions": [ { "type": "click", "target": { "id": "demo_claim" } } ],
+      "next": "done",
+      "timeoutMs": 15000
+    },
+    {
+      "id": "done",
+      "match": { "has": { "textContains": "Reward claimed" } },
+      "end": "success"
+    },
+    {
+      "id": "sold_out",
+      "match": { "has": { "text": "Sold out" } },
+      "actions": [ { "type": "back" } ],
+      "end": "failure"
+    }
+  ],
+  "interceptors": [
+    {
+      "id": "close_ad",
+      "match": { "has": [ { "text": "AD" }, { "id": "demo_ad_close", "clickable": true } ] },
+      "actions": [ { "type": "click", "target": { "id": "demo_ad_close" } } ],
+      "maxTimes": 3
+    }
+  ]
+}

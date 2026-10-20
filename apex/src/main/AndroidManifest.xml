@@ -1,3 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SDK 不声明额外权限，需要的权限由宿主按需声明 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<!-- SDK 不声明额外权限。无障碍服务随 AAR 合并进宿主；宿主不需要时可用 tools:node="remove" 移除 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- 类名会被持久化到系统设置 enabled_accessibility_services，改名会让已开启的服务失效 -->
+        <service
+            android:name="com.github.susanaluis877.apex.service.ApexAccessibilityService"
+            android:exported="false"
+            android:label="@string/apex_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/apex_accessibility_service_config" />
+        </service>
+    </application>
+</manifest>

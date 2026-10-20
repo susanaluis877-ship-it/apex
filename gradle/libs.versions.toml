@@ -1,9 +1,12 @@
 [versions]
 agp = "9.3.1"
 junit = "4.13.2"
+orgJson = "20251224"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+# 仅测试用：android.jar 里的 org.json 是空实现，JVM 单测需要真实实现
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }

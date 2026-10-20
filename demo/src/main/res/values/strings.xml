@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 覆盖 SDK 的同名资源，自定义系统无障碍设置里显示的服务名和说明 -->
+    <string name="apex_accessibility_label">Apex Demo 自动化</string>
+    <string name="apex_accessibility_description">Apex Demo 会读取屏幕内容并模拟点击，用来演示状态图自动化流程。只操作本 Demo 内的页面。</string>
+</resources>

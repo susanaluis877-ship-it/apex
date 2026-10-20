@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 代码里创建的 View 用 generateViewId() 时无障碍拿不到资源名，选择器要用 id 就得声明固定 id -->
+    <item name="demo_start" type="id" />
+    <item name="demo_claim" type="id" />
+    <item name="demo_ad_close" type="id" />
+</resources>

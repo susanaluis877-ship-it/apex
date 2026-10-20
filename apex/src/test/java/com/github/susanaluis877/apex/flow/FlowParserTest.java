@@ -1,0 +1,99 @@
+package com.github.susanaluis877.apex.flow;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import org.junit.Test;
+
+public class FlowParserTest {
+
+    private static final String STATES =
+            "[{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"back\"}], \"next\": \"b\"},"
+                    + " {\"id\": \"b\", \"match\": {\"has\": {\"text\": \"ok\"}}, \"end\": \"success\"}]";
+
+    @Test
+    public void minimalFlow() throws Exception {
+        Flow flow = FlowParser.parse("{\"id\": \"f\", \"start\": \"a\", \"states\": " + STATES + "}");
+        assertEquals("f", flow.getId());
+        assertEquals(2, flow.getStates().size());
+        assertEquals(FlowDefaults.DEFAULT_STATE_TIMEOUT_MS, flow.getState("a").getTimeoutMs());
+    }
+
+    @Test
+    public void explicitNullIsTreatedAsMissing() throws Exception {
+        Flow flow = FlowParser.parse("{\"id\": \"f\", \"start\": \"a\", \"timeoutMs\": null, \"states\": " + STATES + "}");
+        assertEquals(Flow.DEFAULT_TIMEOUT_MS, flow.getTimeoutMs());
+    }
+
+    @Test
+    public void errorPaths() {
+        assertError("not json", "", "invalid JSON");
+        assertError("{\"start\": \"a\", \"states\": []}", "id", "required");
+        assertError("{\"id\": \"f\", \"schema\": 2, \"states\": []}", "schema", "unsupported schema 2");
+        assertError("{\"id\": \"f\", \"stats\": []}", "stats", "unknown key");
+        assertError("{\"id\": \"f\", \"start\": \"a\"}", "states", "required");
+        assertError("{\"id\": \"f\", \"timeoutMs\": \"10\", \"states\": []}", "timeoutMs", "expected integer");
+        assertError("{\"id\": \"f\", \"timeoutMs\": 1.5, \"states\": []}", "timeoutMs", "expected integer");
+        assertError(flow("{\"id\": \"a\", \"mtach\": {}}"), "states[0].mtach", "unknown key");
+        assertError(flow("{\"id\": \"a\", \"match\": {}}"), "states[0].match",
+                "matcher needs at least one condition");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": [{\"text\": \"x\"}, {\"idd\": \"y\"}]}}"),
+                "states[0].match.has[1].idd", "unknown key");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": {\"textMatches\": \"(\"}}}"),
+                "states[0].match.has.textMatches", "invalid regex");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": {\"visible\": false}}}"),
+                "states[0].match.has", "selector needs at least one condition");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": false}}"), "states[0].match.always",
+                "expected true");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"tapp\"}]}"),
+                "states[0].actions[0].type", "unknown action type 'tapp'");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"click\"}]}"),
+                "states[0].actions[0].target", "required");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true},"
+                        + " \"actions\": [{\"type\": \"click\", \"target\": {\"id\": \"x\"}, \"mode\": \"fast\"}]}"),
+                "states[0].actions[0].mode", "expected one of [auto, node, gesture]");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true},"
+                        + " \"actions\": [{\"type\": \"back\", \"target\": {\"id\": \"x\"}}]}"),
+                "states[0].actions[0].target", "unknown key");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true},"
+                        + " \"actions\": [{\"type\": \"tap\", \"xRatio\": 1.5, \"yRatio\": 0.5}]}"),
+                "states[0].actions[0]", "ratio must be within [0, 1]");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"end\": \"ok\"}"),
+                "states[0].end", "expected \"success\" or \"failure\"");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"next\": [1]}"),
+                "states[0].next[0]", "expected string");
+    }
+
+    @Test
+    public void validationProblemsMapToJsonPaths() {
+        assertError("{\"id\": \"f\", \"start\": \"a\", \"states\": ["
+                        + "{\"id\": \"a\", \"match\": {\"always\": true}, \"end\": \"success\"},"
+                        + "{\"id\": \"b\", \"match\": {\"always\": true}, \"next\": [\"a\", \"zzz\"]}]}",
+                "states[1].next[1]", "unknown state 'zzz'");
+        assertError("{\"id\": \"f\", \"start\": \"nope\", \"states\": " + STATES + "}",
+                "start", "unknown state 'nope'");
+        assertError("{\"id\": \"f\", \"start\": \"a\", \"states\": " + STATES
+                        + ", \"interceptors\": [{\"id\": \"i\", \"match\": {\"always\": true}}]}",
+                "interceptors[0].actions", "interceptor needs at least one action");
+        assertError("{\"id\": \"f\", \"start\": \"a\", \"defaults\": {\"timeoutMs\": 0}, \"states\": " + STATES + "}",
+                "defaults.timeoutMs", "must be > 0");
+        assertError("{\"id\": \"f\", \"start\": \"a\", \"states\": ["
+                        + "{\"id\": \"a\", \"match\": {\"custom\": \"nope\"}, \"end\": \"success\"}]}",
+                "states[0].match", "custom matcher 'nope' is not registered");
+    }
+
+    private static String flow(String firstState) {
+        return "{\"id\": \"f\", \"start\": \"a\", \"states\": [" + firstState + "]}";
+    }
+
+    private static void assertError(String json, String path, String reasonPrefix) {
+        try {
+            FlowParser.parse(json);
+            fail("expected FlowParseException for " + json);
+        } catch (FlowParseException e) {
+            assertEquals(e.getMessage(), path, e.getPath());
+            assertTrue(e.getMessage(), e.getReason().startsWith(reasonPrefix));
+        }
+    }
+}
