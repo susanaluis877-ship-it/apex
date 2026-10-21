@@ -156,6 +156,14 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - 截图：`adb exec-out screencap` 取原始 RGBA，抽样缩到约 540 宽，每个通道保留高 4 位，再用 zlib 编码 PNG；超过 80 KB 继续缩小（MCP 工具结果有大小限制）。
 - 探索记录在 `.apex/sessions/<时间>/`：`journal.jsonl`、每个新页面的样本 `pages/P*.json`、截图。
 
+**验收方法（改了 skill 或工具后照这个重跑）：**
+
+- 用全新的通用子代理模拟「只装了插件的新会话」：只给一句需求和 SKILL.md 的路径，说明 `${CLAUDE_SKILL_DIR}` 的实际路径、命令行用法、`ANDROID_SERIAL` 和单独的 `APEX_HOME`；禁止读 `docs/examples`、其他会话目录和 SDK 源码（宿主模块可以读写）。
+- 要求它汇报：交付物、每次运行结果、迭代轮数、工具调用量、**工具和 skill 的具体问题**、手机最后的状态。每轮反馈修完再跑下一个任务。
+- skill 和参考文档里的例子不要用验收任务本身的场景（会泄题）。
+- 测试会改手机状态：开始前记录原值（亮度、深色模式、闹钟列表），结束后恢复；自动操作系统设置时前后各做一次 `settings list secure/system/global` 对比。
+- 最后在 runner 里点「运行」跑一遍交付的流程，确认不依赖 AI 和电脑也能跑。
+
 ## 测试
 
 - 单测开了 `unitTests.isReturnDefaultValues = true`，`android.util.Log` 之类的调用会直接返回默认值。正因为如此，需要 `PurityTest` 防止纯 Java 的包误用 Android API。
@@ -176,7 +184,12 @@ claude plugin validate ./              # 检查插件市场和插件清单
   - **强制停止会把服务从已开启列表里移除**（这是 AOSP 的 `onPackagesForceStoppedLocked`，所有机型都一样），脚本里不要用 `am force-stop`。重置页面用 `am start -f 0x10008000`（NEW_TASK|CLEAR_TASK）。
   - adb 也不能 `pm grant` 运行时权限，要在界面上授予。
   - 首次 `adb install` 要在手机上确认，确认前命令会一直等着；之后的 `install -r` 一般直接成功。
-  - `adb install -r` 覆盖安装不会关掉服务。
+  - `adb install -r` 覆盖安装不会关掉服务；卸载后系统设置里还留着服务名，重新安装后才清掉。
+  - 首次 `adb install` 会弹「继续安装」确认（不要密码），`setup` 会在 adb 模式下点掉。
+  - 无障碍服务的详情页 shell 没权限直接打开（`ACCESSIBILITY_DETAILS_SETTINGS` 要 `OPEN_ACCESSIBILITY_DETAILS_SETTINGS`），只能从无障碍设置列表里按服务名进去；开启时弹「要允许…完全控制你的设备吗？」，点「允许」。
+  - `launchApp` 的落点：设置回到首页但保留列表滚动位置；时钟停在上次的标签页，新建面板会被关掉，多选模式会保留。
+  - 时钟新建闹钟需要「音乐和音频」权限，被拒绝两次后只能去应用权限页开。时间滚轮是标成不可见的虚拟节点，文字形如「07小时选择器项目…」（补零）。
+  - 屏幕 30 秒没触摸会变暗（DIM），这时亮度类读数变成 0；节点点击不算触摸。
 - **多台设备。** `gradlew installDebug` 会装到所有连着的设备上。指定设备用 `adb -s <serial> install -r ...`，或者设置 `ANDROID_SERIAL`。
 
 ## 发布
