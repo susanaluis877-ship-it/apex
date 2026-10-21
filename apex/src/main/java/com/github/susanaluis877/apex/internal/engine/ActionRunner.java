@@ -143,7 +143,12 @@ public final class ActionRunner {
         String nodeFailure = null;
         if (mode != Action.ClickMode.GESTURE) {
             UiNode clickable = clickableSelfOrAncestor(node, longClick);
-            if (clickable != null) {
+            if (clickable != null && clickable != node && mode == Action.ClickMode.AUTO
+                    && isContainerOf(clickable, node, screen) && onScreen(node.getBounds(), screen)) {
+                // 可点击的祖先是整个列表、月视图或全屏遮罩：对它 ACTION_CLICK 点不到目标，而且常常返回成功却没反应。
+                // 改按目标中心坐标点（便签列表项、日历日期格都是这样）
+                nodeFailure = "skipped " + nodeAction + " on ancestor " + clickable + ": it is a container, not the target";
+            } else if (clickable != null) {
                 ActionResult r = executor.clickNode(clickable, longClick);
                 String on = clickable == node ? " on " + node : " on ancestor " + clickable + " of " + node;
                 if (r.isOk()) {
@@ -178,18 +183,21 @@ public final class ActionRunner {
     private ActionResult scroll(Action.Scroll scroll, ScreenSnapshot screen) {
         UiNode node = container(scroll.getTarget(), screen);
         if (node == null) {
-            return ActionResult.soft(scroll.getTarget() == null ? "no scrollable node on screen"
-                    : "no scrollable container for " + scroll.getTarget() + ": "
-                    + scroll.getTarget().explainMismatch(screen));
+            return ActionResult.soft(noContainer(scroll.getTarget(), screen));
         }
         return scrollNode(node, scroll.getDirection(), screen);
     }
 
-    /** 选择器命中的节点或它最近的可滚动祖先；选择器为 null 时取屏幕上第一个可见的可滚动节点。 */
+    /**
+     * 选择器命中的节点或它最近的可滚动祖先；选择器为 null 时取屏幕上第一个可见的可滚动节点，但不取左右翻页的容器。
+     *
+     * <p>左右翻页的 ViewPager 一滚就翻到了另一个标签页（ColorOS 便签的「笔记 / 待办」），要翻页时把它写成 container。
+     * 同样的原因，往上找时遇到不能滚的列表就停下：列表内容一屏放得下时它不可滚动，再往外找常会找到 ViewPager。
+     */
     private static UiNode container(Selector selector, ScreenSnapshot screen) {
         if (selector == null) {
             for (UiNode n : screen.nodes()) {
-                if (n.isVisible() && n.isScrollable()) {
+                if (n.isVisible() && n.isScrollable() && !isPager(n)) {
                     return n;
                 }
             }
@@ -197,9 +205,31 @@ public final class ActionRunner {
         }
         UiNode node = selector.findFirst(screen);
         while (node != null && !node.isScrollable()) {
+            if (isListClass(node.getClassName())) {
+                return null;
+            }
             node = node.getParent();
         }
         return node;
+    }
+
+    /** {@link #container} 找不到时的原因。 */
+    private static String noContainer(Selector selector, ScreenSnapshot screen) {
+        if (selector == null) {
+            for (UiNode n : screen.nodes()) {
+                if (n.isVisible() && n.isScrollable()) {
+                    return "no scrollable list on screen; skipped " + n + ", which flips between pages"
+                            + " (give it as the container to scroll it)";
+                }
+            }
+            return "no scrollable node on screen";
+        }
+        for (UiNode n = selector.findFirst(screen); n != null; n = n.getParent()) {
+            if (!n.isScrollable() && isListClass(n.getClassName())) {
+                return n + " is not scrollable now (its content fits on the screen); not scrolling its ancestors";
+            }
+        }
+        return "no scrollable container for " + selector + ": " + selector.explainMismatch(screen);
     }
 
     /**
@@ -292,9 +322,8 @@ public final class ActionRunner {
                         + action.getTarget().explainMismatch(s) + seenValues(seen));
             }
             if (node == null) {
-                return ActionResult.soft(action.getContainer() == null ? "no scrollable node on screen"
-                        : "no scrollable container for " + action.getContainer() + ": "
-                        + action.getContainer().explainMismatch(s));
+                return ActionResult.soft("target not found: " + action.getTarget().explainMismatch(s) + "; "
+                        + noContainer(action.getContainer(), s));
             }
             if ((node.canScrollForward() || node.canScrollBackward()) && !canScroll(node, action.getDirection())) {
                 return ActionResult.soft("reached the " + (towardsEnd(action.getDirection()) ? "end" : "start")
@@ -443,6 +472,39 @@ public final class ActionRunner {
             }
         }
         return null;
+    }
+
+    /**
+     * 祖先是容器而不是目标的一部分：列表 / 滚动容器，或者占了屏幕的四分之一以上、面积是目标的 8 倍以上
+     * （月视图、全屏遮罩）。列表里一行的可点击容器不算，对它 ACTION_CLICK 就是点这一行。
+     */
+    private static boolean isContainerOf(UiNode ancestor, UiNode target, ScreenSnapshot screen) {
+        if (ancestor.isScrollable() || isListClass(ancestor.getClassName())) {
+            return true;
+        }
+        long a = area(ancestor.getBounds());
+        long t = area(target.getBounds());
+        long s = (long) screen.getScreenWidth() * screen.getScreenHeight();
+        return t > 0 && s > 0 && a * 4 >= s && a >= t * 8;
+    }
+
+    private static long area(Bounds b) {
+        return b.isEmpty() ? 0 : (long) b.width() * b.height();
+    }
+
+    /** 列表、网格、滚动视图这类容器的类名。 */
+    static boolean isListClass(String className) {
+        return className != null && (className.endsWith("RecyclerView") || className.endsWith("ListView")
+                || className.endsWith("GridView") || className.endsWith("ScrollView")
+                || className.contains("ViewPager"));
+    }
+
+    /** 左右翻页的容器：ViewPager 本身，或者 ViewPager2 里面那个横向的 RecyclerView。 */
+    private static boolean isPager(UiNode node) {
+        String cls = node.getClassName();
+        UiNode parent = node.getParent();
+        return cls != null && (cls.contains("ViewPager") || cls.endsWith("HorizontalScrollView"))
+                || parent != null && parent.getClassName() != null && parent.getClassName().contains("ViewPager");
     }
 
     private static int clampX(Coord c, ScreenSnapshot screen) {

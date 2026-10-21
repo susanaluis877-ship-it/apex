@@ -96,6 +96,21 @@ public final class ShopFlows {
 
 `ActionContext`：`screen()` 当前快照，`refresh()` 重新抓，`click(node)`，`perform(action)` 执行内置动作，`sleep(ms)`，`isCancelled()`。条件函数每轮可能调用多次，不要做耗时操作；动作函数在引擎线程上同步执行，循环里检查 `isCancelled()`。动作里不能再 `perform` 另一个 `run(...)` / `custom(...)`。
 
+### 内联代码用到的 API
+
+| 类型 | 包 | 常用方法 |
+|---|---|---|
+| `ScreenSnapshot` | `com.github.susanaluis877.apex.node` | `nodes()`（所有窗口的节点，先序遍历）、`getPackageName()`、`getActivity()`、`getWindows()`、`getScreenWidth()` / `getScreenHeight()` |
+| `UiNode` | `com.github.susanaluis877.apex.node` | `getText()`、`getDesc()`、`getViewId()`（完整 id，形如 `com.foo:id/title`）、`getClassName()`、`getBounds()`、`getRange()`、`getStateDescription()`、`isChecked()` / `isEnabled()` / `isSelected()` / `isVisible()`、`getParent()`、`getChildren()` |
+| `Selector`（`By.xxx(...)` 的返回值） | `com.github.susanaluis877.apex.match` | `findFirst(screen)`（没找到返回 null）、`findAll(screen)`、`matches(node)`、`explainMismatch(screen)`。默认只找可见节点，要找不可见的加 `.visible(false)`。**不可变**：每个链式方法都返回新对象，选择器常量可以放心共用 |
+| `ActionContext` | `com.github.susanaluis877.apex.action` | `screen()`、`refresh()`（重新抓快照并返回它）、`click(node)`（返回是否成功）、`perform(action)`（返回 true 表示成功，软失败、硬失败都是 false）、`sleep(ms)`、`isCancelled()` |
+| `Match.custom(fn)` | `com.github.susanaluis877.apex.match` | `fn` 收到 `ScreenSnapshot`，返回 boolean |
+
+- **在状态之间传值**（例如先在一个 App 里读出数据，再到另一个 App 里输入）：在流程方法里建一个 `AtomicReference`，前面状态的 `run(...)` 写入，后面的条件和动作读取。这要求每次运行都重新调用流程方法构建 `Flow`（宿主列表用 `Supplier<Flow>` / 方法引用登记就是这样），同一个 `Flow` 对象跑两次会带着上次的值。
+- **SDK 和宿主的 minSdk 是 24**：没开 core library desugaring 时不能用 `java.time`，日期计算用 `java.util.Calendar`。
+- **没有 `textStartsWith`**：用 `textMatches("ApexLab 天气 .*")`（整段匹配，多行文字加 `(?s)`）。
+- 有的 App 的文字里带看不见的方向控制符（例如温度里的 U+200E），按文字比对前先去掉 `[\u200e\u200f\u2066-\u2069]`。
+
 ## 什么时候用内联代码
 
 内置的条件和动作能表达的就别写代码（能转 JSON、更好读）。需要这些时才写：

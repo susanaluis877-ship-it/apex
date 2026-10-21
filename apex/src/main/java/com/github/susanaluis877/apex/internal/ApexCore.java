@@ -17,11 +17,13 @@ import com.github.susanaluis877.apex.flow.Flow;
 import com.github.susanaluis877.apex.internal.android.AccessibilityScreenSource;
 import com.github.susanaluis877.apex.internal.android.ActivityTracker;
 import com.github.susanaluis877.apex.internal.android.AndroidActionExecutor;
+import com.github.susanaluis877.apex.internal.android.StatusOverlay;
 import com.github.susanaluis877.apex.internal.engine.Clock;
 import com.github.susanaluis877.apex.internal.engine.EngineConfig;
 import com.github.susanaluis877.apex.internal.engine.EventSignal;
 import com.github.susanaluis877.apex.internal.engine.FlowEngine;
 import com.github.susanaluis877.apex.internal.engine.RunController;
+import com.github.susanaluis877.apex.internal.engine.RunMonitor;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.service.ApexAccessibilityService;
 
@@ -48,6 +50,7 @@ public final class ApexCore {
     private final ActivityTracker activityTracker = new ActivityTracker();
     private final AtomicReference<Run> current = new AtomicReference<>();
     private final AtomicInteger runCounter = new AtomicInteger();
+    private final RunMonitor monitor = new RunMonitor();
 
     private Handler mainHandler;
     private ExecutorService engineThread;
@@ -55,6 +58,9 @@ public final class ApexCore {
     private volatile boolean initialized;
     private volatile ApexAccessibilityService service;
     private volatile Context appContext;
+    private volatile boolean overlayEnabled;
+    /** 只在主线程上创建和移除。 */
+    private volatile StatusOverlay overlay;
 
     private ApexCore() {
     }
@@ -71,7 +77,12 @@ public final class ApexCore {
             }
             ApexLog.configure(config.getLogger(), config.getLogLevel());
             this.appContext = appContext;
+            overlayEnabled = config.isStatusOverlay();
             initialized = true;
+        }
+        if (overlayEnabled && service != null) {
+            // 服务比 init 先连上（宿主在 Activity 里才 init）
+            postMain(this::showOverlay);
         }
         ApexLog.i("initialized, version=" + BuildConfig.SDK_VERSION + ", host=" + appContext.getPackageName()
                 + ", service connected=" + isServiceConnected());
@@ -94,20 +105,30 @@ public final class ApexCore {
 
     // ---- 服务 ----
 
+    /** 在主线程调用。 */
     public void onServiceConnected(ApexAccessibilityService svc) {
         service = svc;
         ApexLog.i("accessibility service connected");
+        if (overlayEnabled) {
+            showOverlay();
+        }
     }
 
+    /** 在主线程调用。 */
     public void onServiceDisconnected(ApexAccessibilityService svc) {
         if (service == svc) {
             service = null;
+            removeOverlay();
             signal.wake();
             ApexLog.i("accessibility service disconnected");
         }
     }
 
     public void onAccessibilityEvent(int type, CharSequence packageName, CharSequence className) {
+        if (className != null && StatusOverlay.A11Y_CLASS.contentEquals(className)) {
+            // 状态悬浮窗自己刷新产生的事件，页面没有变化
+            return;
+        }
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             activityTracker.onWindowStateChanged(packageName, className);
         }
@@ -128,7 +149,37 @@ public final class ApexCore {
     }
 
     AndroidActionExecutor newExecutor(AccessibilityScreenSource source) {
-        return new AndroidActionExecutor(source, this::service);
+        return new AndroidActionExecutor(source, this::service, () -> overlay);
+    }
+
+    // ---- 状态悬浮窗 ----
+
+    private void showOverlay() {
+        ApexAccessibilityService svc = service;
+        if (overlay != null || svc == null) {
+            return;
+        }
+        StatusOverlay o = new StatusOverlay(svc, monitor, this::cancelCurrent);
+        o.attach();
+        overlay = o;
+    }
+
+    private void removeOverlay() {
+        StatusOverlay o = overlay;
+        overlay = null;
+        if (o != null) {
+            o.detach();
+        }
+    }
+
+    /** 暂时隐藏或恢复悬浮窗（调试桥截图用），返回有没有悬浮窗。可以在任意线程调用。 */
+    boolean setOverlayVisible(boolean visible) {
+        StatusOverlay o = overlay;
+        if (o == null) {
+            return false;
+        }
+        o.setVisible(visible);
+        return true;
     }
 
     /** 新的取消开关，等待基于全局事件信号。 */
@@ -145,6 +196,11 @@ public final class ApexCore {
 
     public boolean isRunning() {
         return current.get() != null;
+    }
+
+    /** 当前或最近一次运行的状态，宿主代码和调试桥发起的运行都在里面。 */
+    RunMonitor monitor() {
+        return monitor;
     }
 
     /** 正在运行的流程 id，没有时为 null。 */
@@ -190,21 +246,26 @@ public final class ApexCore {
             return finishImmediately(listener, RunResult.notStarted(RunResult.Status.BUSY, flowId,
                     "flow '" + current.get() + "' is running"));
         }
-        FlowListener mainListener = listener != null ? new MainThreadListener(listener) : null;
+        FlowListener engineListener = new MonitoringListener(listener != null ? new MainThreadListener(listener) : null);
         engineThread().execute(() -> {
             RunResult result;
+            monitor.onStart(runId, flowId);
             try {
                 AccessibilityScreenSource source = newScreenSource();
                 FlowEngine engine = new FlowEngine(runId, flow, Registry.get().globalInterceptors(), source,
-                        newExecutor(source), Clock.SYSTEM, run.controller, mainListener, EngineConfig.DEFAULT);
-                if (traceSink != null) {
-                    engine.setTraceSink(traceSink);
-                }
+                        newExecutor(source), Clock.SYSTEM, run.controller, engineListener, EngineConfig.DEFAULT);
+                engine.setTraceSink(event -> {
+                    monitor.onTrace(event);
+                    if (traceSink != null) {
+                        traceSink.accept(event);
+                    }
+                });
                 result = engine.run();
             } catch (Throwable t) {
                 ApexLog.e("[" + runId + "] run crashed", t);
                 result = RunResult.notStarted(RunResult.Status.ERROR, flowId, "internal error: " + t);
             }
+            monitor.onFinish(result);
             // 先释放槽位再回调，宿主可以在 onFinished 里直接开始下一个流程
             run.finished = true;
             current.compareAndSet(run, null);
@@ -297,6 +358,35 @@ public final class ApexCore {
         @Override
         public String toString() {
             return flowId;
+        }
+    }
+
+    /** 在引擎线程上先记进 {@link RunMonitor}，再交给宿主的监听器（可以为 null）。 */
+    private final class MonitoringListener implements FlowListener {
+        private final FlowListener delegate;
+
+        MonitoringListener(FlowListener delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void onStateEntered(String stateId, int step) {
+            monitor.onStateEntered(stateId, step);
+            if (delegate != null) {
+                delegate.onStateEntered(stateId, step);
+            }
+        }
+
+        @Override
+        public void onInterceptor(String interceptorId, int count) {
+            if (delegate != null) {
+                delegate.onInterceptor(interceptorId, count);
+            }
+        }
+
+        @Override
+        public void onFinished(RunResult result) {
+            // 引擎不调用；结果由 run() 的返回值处理
         }
     }
 

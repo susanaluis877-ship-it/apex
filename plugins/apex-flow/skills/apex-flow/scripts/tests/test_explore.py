@@ -251,6 +251,77 @@ class ToolHelpersTest(unittest.TestCase):
             kit.resolve_action("jump @1")
 
 
+class RunStatusTest(unittest.TestCase):
+    """宿主界面里发起的运行：status 能看到，运行期间 observe / act 不干等；截图前后隐藏悬浮窗。"""
+
+    RUNNING = {"ok": True, "run": {"flowId": "weather.to_note", "runId": "weather.to_note#3", "running": True,
+                                   "state": "note_list", "step": 9, "elapsedMs": 12300, "result": None,
+                                   "trace": [{"ev": "trace", "t": 12300, "type": "LOOP", "priority": 5,
+                                              "state": "note_list", "msg": "states a → b → a repeated 3 times"}]}}
+
+    class Bridge:
+        def __init__(self, responses):
+            self.responses = responses
+            self.requests = []
+
+        def request(self, payload, timeout=None):
+            self.requests.append(payload)
+            r = self.responses.get(payload["cmd"])
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    def kit(self, responses):
+        kit = Toolkit.__new__(Toolkit)
+        kit.bridge = self.Bridge(responses)
+        kit.adb = None
+        kit._adb_mode_reason = lambda: None
+        return kit
+
+    def test_status_shows_running_and_finished_runs(self):
+        out = self.kit({"status": self.RUNNING}).status()
+        self.assertIn("运行中: weather.to_note  状态 note_list（第 9 步）  已用 12.3s", out.text)
+        self.assertIn("LOOP", out.text)
+        done = {"ok": True, "run": {"flowId": "f", "running": False, "state": "x", "step": 3, "elapsedMs": 21800,
+                                    "trace": [], "result": {"status": "TIMEOUT", "path": ["a", "b"], "durationMs": 21800,
+                                                            "message": "no next state of 'b'"}}}
+        out = self.kit({"status": done}).status()
+        self.assertFalse(out.ok)
+        self.assertIn("最近一次: f  结果 TIMEOUT  路径: a → b  耗时 21.8s", out.text)
+        self.assertIn("原因: no next state of 'b'", out.text)
+        self.assertIn("还没有运行过", self.kit({"status": {"ok": True, "run": None}}).status().text)
+        old = ApexError("BAD_REQUEST", "unknown cmd \"status\" (supported: info)")
+        with self.assertRaises(ApexError) as e:
+            self.kit({"status": old}).status()
+        self.assertEqual("UNSUPPORTED", e.exception.code)
+
+    def test_observe_and_act_do_not_wait_while_a_flow_runs(self):
+        kit = self.kit({"info": {"ok": True, "device": {"running": "weather.to_note"}}, "status": self.RUNNING})
+        out = kit.observe(screenshot="none")
+        self.assertIn("流程 weather.to_note 正在运行", out.text)
+        self.assertIn("状态 note_list", out.text)
+        self.assertNotIn("snapshot", [r["cmd"] for r in kit.bridge.requests])
+        with self.assertRaises(ApexError) as e:
+            kit.act("back")
+        self.assertEqual("BUSY", e.exception.code)
+
+    def test_screenshots_hide_the_status_overlay(self):
+        kit = self.kit({"overlay": {"ok": True, "overlay": True}})
+        calls = []
+        original = shot.screenshot
+        shot.screenshot = lambda adb, boxes: calls.append([r["visible"] for r in kit.bridge.requests]) or b"png"
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                session = type("S", (), {"shot_path": lambda self, name: os.path.join(d, name + ".png")})()
+                out = Output("x")
+                kit._attach_shot(out, None, "plain", session, "a")
+        finally:
+            shot.screenshot = original
+        self.assertEqual([[False]], calls, "截图时悬浮窗已经隐藏")
+        self.assertEqual([False, True], [r["visible"] for r in kit.bridge.requests])
+        self.assertEqual(b"png", out.image)
+
+
 class McpTest(unittest.TestCase):
 
     def run_server(self, messages, kit=None):

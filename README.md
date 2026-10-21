@@ -28,7 +28,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.4.0")
+    implementation("com.github.susanaluis877-ship-it:apex:0.5.0")
 }
 ```
 
@@ -188,10 +188,11 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 - `optional: true`，DSL 写 `.optional()`：失败时跳过，继续下一个动作。
 - `delayMs`，DSL 写 `.delayMs(ms)`：执行前先等一会儿。
 
-`click` 的 `auto` 模式先对目标或它最近的可点击祖先执行节点点击，不成功再按节点中心坐标点击。自绘 View、WebView、Flutter 页面建议直接用 `gesture` 模式。
+`click` 的 `auto` 模式先对目标或它最近的可点击祖先执行节点点击，不成功再按节点中心坐标点击。如果这个可点击的祖先是整个列表、月视图、全屏遮罩这类容器（列表 / 滚动容器，或者占屏幕四分之一以上、比目标大 8 倍以上），对它点击点不到目标，`auto` 会直接按目标中心坐标点击。自绘 View、WebView、Flutter 页面建议直接用 `gesture` 模式。
 
 - **`scroll`**：很多列表只支持 `forward`/`backward`，不支持 `up`/`down`。方向动作失败时会自动换成对应的 `forward`/`backward`，再不行就在容器范围内滑动。
-- **`scrollTo`**：滚动容器（默认第一个可滚动的区域），每次滚动后重新查找，直到 `target` 出现；滚到底或滚了 `maxSwipes` 次还没找到算软失败。也能拨动滚轮选择器：容器和目标都是选择器那一列，目标里写想要的值，例如 `{"textMatches": "7小时.*", "visible": false}`（这类虚拟节点常被系统标成不可见）。
+- **滚动哪个容器**：`target` / `container` 命中的节点，或它最近的可滚动祖先；没写时取屏幕上第一个可滚动的区域，但不取左右翻页的容器（ViewPager），要翻页时把它写成容器。列表内容一屏放得下时它不可滚动，这时不会再往外找，免得滚到外层的 ViewPager、翻到另一个标签页。
+- **`scrollTo`**：滚动容器，每次滚动后重新查找，直到 `target` 出现；滚到底或滚了 `maxSwipes` 次还没找到算软失败。也能拨动滚轮选择器：容器和目标都是选择器那一列，目标里写想要的值，例如 `{"textMatches": "7小时.*", "visible": false}`（这类虚拟节点常被系统标成不可见）。
 - **`setProgress`**：目标可以是滑块本身，也可以是包着滑块的那一行。已经是目标值时直接成功；节点不支持直接设值时按比例位置点击。
 
 ### 用 JSON 定义
@@ -317,6 +318,7 @@ JSON 里写 `{"custom": "hasBadge"}` 和 `{"type": "custom", "name": "tapAll", "
 - 每个动作点了哪个节点、用什么方式、结果和耗时。
 - 拦截器触发、重试和续跑。
 - 等待时，每个候选状态为什么还没匹配。
+- 几个状态在毫无变化的页面上轮流进入（`LOOP`）：常见原因是它们的条件同时匹配同一页，或者动作没有改变页面。只是提示，不结束流程（「刷新 → 检查」这类轮询本来就会这样）；流程最后超时或步数超限时，原因里会带上它。
 - 失败时，最后一屏的节点树。
 
 `formatTrace()` 可以把这些格式化成文本，方便上报：
@@ -353,6 +355,17 @@ Apex.init(this, new ApexConfig.Builder()
 - DEBUG：每个动作的细节、等待原因。
 
 日志接收器可能在任意线程调用，要线程安全并尽快返回。
+
+**状态悬浮窗。** 验收或调试时，可以在屏幕上显示运行状态：
+
+```java
+Apex.init(this, new ApexConfig.Builder().setStatusOverlay(BuildConfig.DEBUG).build());
+```
+
+- 收起时是一个可拖动的小标签：颜色表示状态（蓝色运行中、绿色成功、红色失败、灰色空闲或已取消），文字是当前状态和步数。
+- 点开是一个面板：流程、状态、步数、用时、失败原因、最近的运行轨迹，运行中可以取消。背景是一层很淡的半透明衬底，能看到下面的页面；轨迹按步骤着色，相邻步骤颜色不同，警告加粗标 ⚠，错误是红色。
+- 宿主代码和调试桥发起的运行都会显示。
+- 用无障碍服务自己的悬浮窗口，不需要悬浮窗权限，服务连接后出现。它不会出现在快照里；坐标点击、滑动经过它时会暂时让开；`apex.py` 截图时会把它隐藏。
 
 **编写选择器。**
 
@@ -395,6 +408,7 @@ python3 $A observe --shot annotated                 # 看页面
 python3 $A act click @13 --intent "进入显示设置" --expect 亮度
 python3 $A deploy                                   # 改了 DSL 后：编译、覆盖安装、等服务重连
 python3 $A run com.foo.flows.SettingsFlows#brightnessMax   # 运行宿主代码里的流程，实时输出轨迹
+python3 $A status                                   # 当前或最近一次运行（包括在宿主界面里点「运行」的）的进度、结果和轨迹
 python3 $A export com.foo.flows.SettingsFlows#brightnessMax -o app/src/main/assets/flows/brightness.json
 ```
 

@@ -4,6 +4,7 @@ import json
 import re
 
 from .errors import ApexError
+from .selectors import is_container_of
 
 
 class Node:
@@ -369,7 +370,10 @@ def render_grep(screen, pattern):
             owner = next((a for a in n.ancestors() if a.f & {"clickable", "longClickable"}), None)
             line = "@%d %s" % (n.h, describe_node(n))
             if owner is not None and not (n.f & {"clickable", "longClickable"}):
-                line += "   ← 点击会落在 @%d %s" % (owner.h, owner.simple)
+                if is_container_of(owner, n):
+                    line += "   ← 可点击的祖先 @%d %s 是整个容器，click 会按它自己的中心坐标点" % (owner.h, owner.simple)
+                else:
+                    line += "   ← 点击会落在 @%d %s" % (owner.h, owner.simple)
             if not n.visible:
                 line += "   (不可见)"
             lines.append(line)

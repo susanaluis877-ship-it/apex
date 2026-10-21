@@ -25,6 +25,7 @@ import com.github.susanaluis877.apex.internal.devtools.Dispatcher;
 import com.github.susanaluis877.apex.internal.engine.Clock;
 import com.github.susanaluis877.apex.internal.engine.EngineConfig;
 import com.github.susanaluis877.apex.internal.engine.RunController;
+import com.github.susanaluis877.apex.internal.engine.RunMonitor;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -267,5 +268,15 @@ final class DevBridge implements Backend {
     @Override
     public ClassLoader classLoader() {
         return context.getClassLoader();
+    }
+
+    @Override
+    public RunMonitor monitor() {
+        return core.monitor();
+    }
+
+    @Override
+    public boolean setOverlayVisible(boolean visible) {
+        return core.setOverlayVisible(visible);
     }
 }

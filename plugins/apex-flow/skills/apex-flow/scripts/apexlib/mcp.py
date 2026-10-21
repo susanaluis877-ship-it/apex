@@ -11,7 +11,7 @@ import traceback
 from .errors import ApexError
 from .tools import Toolkit
 
-SERVER_VERSION = "0.4.0"
+SERVER_VERSION = "0.5.0"
 KNOWN_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 
 INSTRUCTIONS = (
@@ -117,6 +117,11 @@ TOOLS = [
     {"name": "run", "description": "在设备上运行流程，返回结果、路径和轨迹（失败时轨迹里有每个候选状态不匹配的原因和最后一屏）。",
      "inputSchema": {"type": "object", "required": ["flow"], "properties": {
          "flow": FLOW, "timeout_s": {"type": "integer"}}}},
+    {"name": "status",
+     "description": "当前或最近一次运行的状态、结果和最近的轨迹，包括在宿主 App 界面里点「运行」发起的运行。"
+                    "流程运行期间 observe / act 拿不到页面，用它看进度。",
+     "inputSchema": {"type": "object", "properties": {
+         "limit": {"type": "integer", "description": "最多返回多少条轨迹，默认 40；-1 为全部"}}}},
     {"name": "export",
      "description": "把流程（通常是 Java DSL 写的 flowRef）写成 JSON，只在项目确实需要 JSON 时用（远程下发、放进 assets、"
                     "推到 runner）。设备上会确认解析回来和原流程相等；有内联代码时会说明在哪个状态、哪个动作，不能转。",
@@ -163,6 +168,8 @@ def call_tool(kit, name, args):
         return kit.features(args["page"])
     if name == "validate":
         return kit.validate(args["flow"])
+    if name == "status":
+        return kit.status(limit=args.get("limit", 40))
     if name == "check":
         return kit.check(args["flow"], samples=args.get("samples"), labels=args.get("labels"),
                          live=args.get("live", False))

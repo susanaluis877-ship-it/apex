@@ -302,6 +302,47 @@ public class FlowEngineTest {
     }
 
     @Test
+    public void loopOnUnchangedScreensIsReportedOnce() {
+        // 两个状态的条件同时匹配同一页，动作也不改变页面：在 a、b 之间来回进入
+        device.show(screen(frame(button("x", "A"))));
+        Flow flow = new Flow.Builder("pingpong").start("a").maxSteps(20)
+                .state("a", s -> s.match(has(By.id("x"))).action(click(By.id("x"))).next("b", "end"))
+                .state("b", s -> s.match(has(By.id("x"))).action(click(By.id("x"))).next("a"))
+                .state("end", s -> s.match(has(By.text("END"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.MAX_STEPS, r.getStatus());
+        assertTrue(r.getMessage(), r.getMessage().endsWith("; states a → b → a repeated 3 times on unchanged screens"));
+        List<TraceEvent> loops = new ArrayList<>();
+        for (TraceEvent e : r.getTrace()) {
+            if (e.getType() == TraceEvent.Type.LOOP) {
+                loops.add(e);
+            }
+        }
+        assertEquals(1, loops.size());
+        assertEquals(ApexLogger.WARN, loops.get(0).getPriority());
+    }
+
+    @Test
+    public void cyclesThatChangeThePageAreNotLoops() {
+        // 「删一条 → 回到列表」这类循环：每一圈页面都不一样
+        int[] left = {10};
+        device.show(() -> screen(frame(button("x", left[0] + " left"))));
+        device.onClick("x", () -> left[0]--);
+        Flow flow = new Flow.Builder("drain").start("a").maxSteps(30)
+                .state("a", s -> s.match(has(By.textMatches("[1-9]\\d* left"))).action(click(By.id("x")))
+                        .next("b", "end"))
+                .state("b", s -> s.match(has(By.textMatches("[1-9]\\d* left"))).next("a", "end"))
+                .state("end", s -> s.match(has(By.text("0 left"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.SUCCESS, r.getStatus());
+        for (TraceEvent e : r.getTrace()) {
+            assertTrue(e.toString(), e.getType() != TraceEvent.Type.LOOP);
+        }
+    }
+
+    @Test
     public void cancelWhileWaiting() {
         app.page = "elsewhere";
         device.at(3_000, device::cancel);

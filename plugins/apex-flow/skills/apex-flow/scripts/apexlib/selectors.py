@@ -67,13 +67,30 @@ def dynamic_regex(text):
 
 
 def click_owner(n):
-    """click 实际落到的节点：自己或最近的可点击祖先。"""
+    """click 实际落到的节点：自己或最近的可点击祖先。祖先是整个列表、月视图这类容器时，SDK 改按 n 的中心坐标点，落点就是 n。"""
     if "clickable" in n.f:
         return n
     for a in n.ancestors():
         if "clickable" in a.f:
-            return a
+            return n if is_container_of(a, n) else a
     return n
+
+
+def _area(b):
+    return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+
+def is_container_of(ancestor, n):
+    """和 SDK 的 ActionRunner.isContainerOf 一致：列表 / 滚动容器，或占屏幕四分之一以上、面积是目标 8 倍以上。"""
+    cls = ancestor.cls
+    if "scrollable" in ancestor.f or cls.endswith(("RecyclerView", "ListView", "GridView", "ScrollView")) \
+            or "ViewPager" in cls:
+        return True
+    root = ancestor
+    while root.parent is not None:
+        root = root.parent
+    a, t, s = _area(ancestor.b), _area(n.b), _area(root.b)
+    return t > 0 and s > 0 and a * 4 >= s and a >= t * 8
 
 
 def suggest(bridge, screen, n, purpose="click"):

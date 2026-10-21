@@ -9,12 +9,14 @@ public final class ApexConfig {
     private final ApexLogger logger;
     private final Integer logLevel;
     private final boolean devtools;
+    private final boolean statusOverlay;
 
     private ApexConfig(Builder builder) {
         this.debug = builder.debug;
         this.logger = builder.logger;
         this.logLevel = builder.logLevel;
         this.devtools = builder.devtools;
+        this.statusOverlay = builder.statusOverlay;
     }
 
     /**
@@ -49,12 +51,20 @@ public final class ApexConfig {
         return devtools;
     }
 
+    /**
+     * 是否在屏幕上显示运行状态悬浮窗，默认不显示。见 {@link Builder#setStatusOverlay(boolean)}。
+     */
+    public boolean isStatusOverlay() {
+        return statusOverlay;
+    }
+
     public static final class Builder {
 
         private boolean debug;
         private ApexLogger logger;
         private Integer logLevel;
         private boolean devtools = true;
+        private boolean statusOverlay;
 
         public Builder setDebug(boolean debug) {
             this.debug = debug;
@@ -83,6 +93,19 @@ public final class ApexConfig {
          */
         public Builder setDevtools(boolean devtools) {
             this.devtools = devtools;
+            return this;
+        }
+
+        /**
+         * 在屏幕上显示运行状态悬浮窗，方便验收和调试：收起时是一个可拖动的小标签，颜色表示状态（蓝色运行中、绿色成功、
+         * 红色失败），文字是当前状态和步数；点开后显示流程、用时、失败原因、最近的运行轨迹，运行中可以取消。
+         * 宿主代码和调试桥发起的运行都会显示。
+         *
+         * <p>用无障碍服务自己的悬浮窗口，不需要悬浮窗权限；服务连接后出现。它不会出现在快照里，
+         * 坐标点击和滑动经过它时会暂时让开。建议只在 debug 构建里打开，例如 {@code setStatusOverlay(BuildConfig.DEBUG)}。
+         */
+        public Builder setStatusOverlay(boolean statusOverlay) {
+            this.statusOverlay = statusOverlay;
             return this;
         }
 

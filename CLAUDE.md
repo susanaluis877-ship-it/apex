@@ -45,9 +45,9 @@ claude plugin validate ./              # 检查插件市场和插件清单
 | `node/` | `UiNode`、`UiWindow`、`Bounds`、`ScreenSnapshot`：快照模型 | ✅ |
 | `match/` | `By`/`Selector`（节点）、`Match`/`ScreenMatcher`（页面）、`ScreenCondition`、`CustomMatcher` | ✅ |
 | `action/` | `Action`（不可变值对象）、`Actions`、`ActionContext`、`ActionFunction`、`CustomAction` | ✅ |
-| `internal/engine/` | `FlowEngine`、`ActionRunner`、`Settler`、`Tracer`、`Fingerprint`、`EventSignal`/`RunController`，以及 `ScreenSource`、`ActionExecutor`、`Clock`、`Waiter` 这些接口 | ✅ |
+| `internal/engine/` | `FlowEngine`、`ActionRunner`、`Settler`、`Tracer`、`Fingerprint`、`EventSignal`/`RunController`、`RunMonitor`（当前 / 最近一次运行的状态），以及 `ScreenSource`、`ActionExecutor`、`Clock`、`Waiter` 这些接口 | ✅ |
 | `internal/devtools/` | 调试桥的协议和逻辑：`Dispatcher`、`DevtoolsSession`、`FlowCheck`、`SnapshotJson`、`Backend` 接口 | ✅ |
-| `internal/android/` | `AccessibilityScreenSource`、`AndroidActionExecutor`、`GestureDispatcher`、`ActivityTracker`、`DisplayInfo` | Android |
+| `internal/android/` | `AccessibilityScreenSource`、`AndroidActionExecutor`、`GestureDispatcher`、`ActivityTracker`、`DisplayInfo`、`StatusOverlay`（状态悬浮窗） | Android |
 | `internal/` | `ApexCore`（运行槽位、引擎线程、服务引用）、`DevBridge`（调试桥的 socket 和 Android 实现）、`ApexLog`、`LogcatLogger`、`Registry`、`ScreenDumper` | — |
 | `service/` | `ApexAccessibilityService`：只把自己交给 `ApexCore`，把事件转成唤醒信号 | Android |
 
@@ -100,6 +100,9 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - `scrollTo`：每次滚动后等 350 ms 再抓快照查找；用 `Fingerprint.ofAll` 判断滚到底，因为滚轮选择器的列是不可见的虚拟节点，`Fingerprint.of` 看不到它们的变化。
 - `setProgress`：AOSP 的 SeekBar 在值不变时让 `ACTION_SET_PROGRESS` 返回 false，所以已经到目标值就直接算成功；不支持直接设值时按比例位置点击。
 - 滚动前先看节点的 `canScrollForward/Backward`（来自 `getActionList()`）：节点报告了能滚的方向、但不包括要滚的方向时，直接报「已到头」，不再滑动。`scrollTo` 另外用 `Fingerprint.content`（不含位置）判断到头，因为 ColorOS 列表到头时会回弹，节点位置还在变。
+- `click` 的 AUTO 模式：最近的可点击祖先是容器（可滚动、列表类类名，或占屏幕 1/4 以上且是目标面积 8 倍以上）时不对它 ACTION_CLICK，直接按目标中心坐标点。ColorOS 便签的列表项、日历月视图的日期格只有整个列表 / 月视图可点击，对它 ACTION_CLICK 返回成功却没反应（apex-lab 测试里两个 App 都中招）。`apex.py` 的 `selectors.is_container_of` 和它保持一致。
+- 滚动容器（`ActionRunner.container`）：没写容器时取第一个可见的可滚动节点，但跳过左右翻页的容器（类名含 ViewPager / HorizontalScrollView，或者父节点是 ViewPager2）；从命中的节点往上找可滚动祖先时，遇到不可滚动的列表类节点就停下。列表一屏放得下时不可滚动，再往外找就找到了 ViewPager，便签的「笔记」被翻到「待办」，流程在两个标签间来回 82 步直到超时。
+- `LOOP` 提示：进入状态时记下（状态 id，页面指纹），最近 2~4 个状态一圈、连续 3 圈完全相同时记一条 WARN（同一圈只记一次），超时 / 步数超限的结束原因里附上它。不结束流程，因为「刷新 → 检查」的轮询本来就会这样。
 - 坐标兜底（点击退到坐标、滑块按比例点、滚动退到滑动）在目标中心不在屏幕内时返回软失败：引擎在页面滑入动画中途就可能进入新状态，这时节点还在屏幕外，按坐标会点到屏幕边缘。
 - 选择器的 `stateDesc` / `progressAtLeast` / `progressAtMost` 是状态过滤（不算“身份”条件），比例由 float 计算，留了 1e-4 的余量。
 - 关系条件 `hasDescendant`（可多个，各自可以由不同子孙满足）和 `inside`（任一祖先匹配）排在条件列表最后：它们要遍历子树或祖先，先让便宜的条件把大部分节点排除。用来表达“同一个列表项里同时有 A 和 B”，验收 T2 时发现两个独立的 `has` 会误判。
@@ -126,6 +129,15 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - **模态对话框。** 弹出模态对话框时，系统只上报对话框这一个窗口，下面的 Activity 窗口不在 `getWindows()` 里。
 - **启动其他 App。** `launchApp` 用服务的 context 加 `FLAG_ACTIVITY_NEW_TASK`；无障碍服务豁免后台启动 Activity 的限制。Android 11 及以上，宿主要声明 `<queries>`。
 - **manifest。** 服务声明为 `exported="false"` 加 `BIND_ACCESSIBILITY_SERVICE` 权限，系统 uid 能正常绑定，已在真机验证。
+- **状态悬浮窗（`StatusOverlay`）。** `ApexConfig.setStatusOverlay(true)` 时，服务连接后在主线程加一个 `TYPE_ACCESSIBILITY_OVERLAY` 窗口（不需要悬浮窗权限）；服务断开时移除。
+  - 快照只取 `TYPE_APPLICATION` 窗口，它不会进快照；`FLAG_NOT_FOCUSABLE`，不会成为活动窗口。
+  - 它的所有视图把 `getAccessibilityClassName()` 报成 `StatusOverlay.A11Y_CLASS`，`ApexCore.onAccessibilityEvent` 见到就丢掉，刷新悬浮窗不会唤醒引擎、拖慢 settle。刷新本身合并成 150 ms 一次。
+  - 坐标手势（`AndroidActionExecutor.gesture`）派发前调用 `stepAside`：手势范围碰到悬浮窗时，在主线程给窗口加 `FLAG_NOT_TOUCHABLE`、等 80 ms 生效，手势结束后恢复。节点动作不经过触摸，不受影响。
+  - 调试桥的 `overlay` 命令暂时隐藏它（`apex.py` 截图前后调用），5 秒后自动恢复。
+  - 根布局是 FrameLayout，子视图要显式给 WRAP_CONTENT，否则默认撑满，文字变长时窗口不会变宽（真机上出现过「ho…」）。
+  - 背景是 50% 不透明的白色衬底加细边框（完全透明或 30% 时，盖在内容多的页面上会和下面的文字叠成一片）；文字用深色加白色光晕（`setShadowLayer`）。试过浅色字加黑色阴影，在白底上发虚。
+  - 轨迹按步骤着色：从 `STATE_ENTER` 消息里的 `(step N)` 取步数，相邻步骤颜色不同。改 `FlowEngine` 里这条消息的格式时要一起改 `StatusOverlay.STEP`。
+- **运行记录（`RunMonitor`）。** `ApexCore.run` 把每次运行（宿主代码和调试桥发起的都算）的状态、步数、最近 200 条轨迹和结果记进去，悬浮窗和调试桥的 `status` 命令都从这里读。之前宿主界面里点「运行」的那次，调试桥完全看不到。
 - **API 废弃。** `AccessibilityNodeInfo.isChecked()` 在 API 36 废弃，但替代方法只有 36 才有，所以继续用它并加了 `@SuppressWarnings`。
 
 ## 调试桥和 AI 工具链
@@ -135,7 +147,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
 **设备端（SDK 里）：**
 
 - `DevBridge` 在抽象 socket `apex_<包名>` 上监听，电脑上用 `adb forward tcp:N localabstract:apex_<包名>` 连接。只在 debuggable 包的主进程、且 `ApexConfig.isDevtools()`（默认 true）时启动。用 `getPeerCredentials` 只接受 uid 0、2000 和本应用：Android 7~8 上其他应用也能连到抽象 socket。不需要 INTERNET 权限，也不改 manifest，所以 JitPack 仍然只发布一个 AAR。
-- 协议：每个连接一行 JSON 请求，一行或多行 JSON 响应（`Dispatcher` 的注释）。命令：info、snapshot、find、act、validate、check、run、cancel。`run` 流式推送轨迹，写失败（客户端断开）就取消运行。
+- 协议：每个连接一行 JSON 请求，一行或多行 JSON 响应（`Dispatcher` 的注释）。命令：info、snapshot、find、act、validate、check、run、export、cancel、status、overlay。status 和 overlay 不占引擎线程，运行中也能用；新增命令不改 `PROTOCOL`，`apex.py` 遇到旧 SDK 的 unknown cmd 时降级处理。`run` 流式推送轨迹，写失败（客户端断开）就取消运行。
 - 屏幕操作都提交到 `apex-engine` 线程；有流程在跑时返回 BUSY。`DevtoolsSession` 整个调试桥共用一个 `AccessibilityScreenSource`，所以快照序号单调递增。
 - 抓快照时等到相隔 200 ms 的两次快照一致才返回：页面切换动画期间没有无障碍事件，节点位置还在变（实测 ColorOS 设置页滑入时 x 坐标在 1080 以外）。
 - `act` 走真实的 `ActionRunner.runOnce`，不包装成单状态流程：终止状态里动作软失败也会报成功，还会触发全局拦截器。
@@ -149,6 +161,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - `setup`：编译安装（安装期间用 adb 模式盯着安装器界面点「继续安装」，遇到密码框就报告给人）→ `settings put`（追加，不覆盖已开启的服务）→ 被拒绝时在设置界面里开：先试 `ACCESSIBILITY_DETAILS_SETTINGS`（ColorOS 上 shell 没权限），再从无障碍设置列表里按服务名找。服务名从已安装 APK 的 `apex_accessibility_label` 资源读（aapt2）。界面操作写成“每轮看屏幕上有什么就处理什么”的循环；只碰写着服务名的那一行或标题是服务名的页面上的开关，只处理提到服务名的确认弹窗——曾经因为条件太宽，在无障碍列表页上误开了「按电源键结束通话」「锁屏快捷启用」。
 - `deploy`：`gradlew :module:assembleDebug` → `adb install -r -t` → 等新进程、调试桥和服务就绪。demo 上一轮约 2~4 秒。
 
+- 有流程在运行时（例如在宿主界面里点了「运行」），引擎线程被占着：`observe` 直接返回 `status` 的进度和原图截图，`act` 直接报 BUSY，不再干等 60 秒；`act` 之后发现启动了流程会提醒。截图前后用 `overlay` 命令隐藏状态悬浮窗。
 - 页面结构：只列可操作元素（带 `@handle`、类型、标签、状态、中心坐标）和不属于任何可操作元素的文本；没有文本的可点击容器用子孙文本拼标签。标为不可见但可操作、有文本的节点（滚轮选择器的列）也列出来。
 - 页面身份（P1、P2…）：包名、弹窗状态、选中的标签页（顶部或底部 25% 区域里 selected 的短文字；选中的标签常常不可点击）都要相同；两边都有标题时只看标题和 Activity，否则按 Activity、id 集合和短文本集合的相似度，阈值 0.6。同一页面内容变化较大时另存样本 `P3.2`…（每页最多 5 份）。
 - 页面标题：窗口标题出现在顶部区域时用它（ColorOS 时钟的窗口标题都是「时钟」，不在页面上，所以不用），否则取顶部区域第一段不可点击的短文字。
@@ -163,6 +176,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - skill 和参考文档里的例子不要用验收任务本身的场景（会泄题）。
 - 测试会改手机状态：开始前记录原值（亮度、深色模式、闹钟列表），结束后恢复；自动操作系统设置时前后各做一次 `settings list secure/system/global` 对比。
 - 最后在 runner 里点「运行」跑一遍交付的流程，确认不依赖 AI 和电脑也能跑。
+- **真实插件会话**（测 MCP、hooks、skill 触发这条真实路径）：在独立工程 `~/ai/repo/apex-lab`（Java，JitPack 引用 SDK，插件按项目范围安装）里用 `claude -p "<需求>" --output-format stream-json --verbose --permission-mode acceptEdits` 开新会话，权限白名单和 `ANDROID_SERIAL`、`APEX_PACKAGE` 写在 `.claude/settings.local.json`。日志里能看到 skill 有没有触发、每次工具调用和最后的报告。手机上还装着 demo，另有两台设备连着，`APEX_PACKAGE`、`ANDROID_SERIAL` 都要设。
 
 ## 测试
 

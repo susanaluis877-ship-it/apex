@@ -12,12 +12,14 @@ description: 用 Apex SDK 为 Android App 编写自动化流程（Java DSL 优�
 
 两种用法，功能相同：
 
-- **MCP 工具**（装了插件时可用，名字里带 `apex`）：`doctor`、`setup`、`deploy`、`observe`、`act`、`suggest`、`find`、`find_text`、`launch`、`plan`、`history`、`features`、`validate`、`check`、`run`、`export`、`push`。`observe` / `act` 默认同时返回页面结构和带编号框的截图。
+- **MCP 工具**（装了插件时可用，名字里带 `apex`）：`doctor`、`setup`、`deploy`、`observe`、`act`、`suggest`、`find`、`find_text`、`launch`、`plan`、`history`、`features`、`validate`、`check`、`run`、`status`、`export`、`push`。`observe` / `act` 默认同时返回页面结构和带编号框的截图。
 - **命令行**：`python3 ${CLAUDE_SKILL_DIR}/scripts/apex.py <命令>`，命令名相同（`find_text` 写成 `find-text`），`-h` 看参数。截图加 `--shot annotated`，输出里有 PNG 路径，用 Read 查看。
 
 `validate` / `check` / `run` / `export` 的流程参数写宿主代码里 DSL 流程的引用，例如 `com.foo.flows.ShopFlows#dailyCheckin`（静态、无参、返回 Flow 的方法）；也接受 JSON 文件。
 
 **两种模式，自动切换**：Apex 调试桥能用且无障碍服务已连接时，`observe` / `act` 走 Apex（页面结构和 Apex 运行时看到的一致，选择器在设备上验证）；宿主没装、服务没开时自动改用 **adb 模式**（uiautomator 看页面、input 操作），只用来做安装、开启服务这类准备工作，输出开头会标明。adb 模式下看到的选择器不要写进流程。
+
+**有流程在运行时**（`run` 之外，例如你点了宿主界面上的「运行」），`observe` 只能给出它的进度，`act` 会报 BUSY；用 `status` 看当前或最近一次运行的进度、结果和轨迹（宿主界面发起的运行也能看到），等它结束再继续。
 
 页面结构里每个可操作元素是一行：`@引用 类型 "标签" 状态 (中心坐标)`。没有自己文字的容器显示成 `含「A」「B」`，A、B 是它里面各个节点的文字，要分开用，不能把整串当成一个文本。`@引用` 只在当前这一屏有效；`act` 会把它换成在设备上验证过的选择器并告诉你用了哪个——写流程时用那个选择器。
 
@@ -96,7 +98,7 @@ description: 用 Apex SDK 为 Android App 编写自动化流程（Java DSL 优�
 ## 第 4 步：真机运行，修到通过
 
 1. 把目标 App 放到一个普通的起点（例如 `launch --reset` 打开它，或回到桌面）。
-2. `run com.foo.flows.XxxFlows#method`。不是 SUCCESS 就读轨迹：最后几条 WAIT 会说明每个候选状态为什么不匹配，失败时还有最后一屏的节点树。对照 [references/troubleshooting.md](references/troubleshooting.md) 改代码 → `deploy` → 再跑。
+2. `run com.foo.flows.XxxFlows#method`（在宿主界面里点「运行」也行，之后用 `status` 看结果和轨迹）。不是 SUCCESS 就读轨迹：最后几条 WAIT 会说明每个候选状态为什么不匹配，失败时还有最后一屏的节点树。对照 [references/troubleshooting.md](references/troubleshooting.md) 改代码 → `deploy` → 再跑。
 3. 通过以后做两次「自测」：
    - 换个起点再跑（目标 App 停在别的页面、在后台）。
    - 目标已经达成时再跑一次，应该直接成功。
@@ -109,4 +111,5 @@ description: 用 Apex SDK 为 Android App 编写自动化流程（Java DSL 优�
 
 - 交付宿主项目里的 DSL 代码（已经编译、在真机上跑通）。
 - **只在项目需要 JSON 时才导出**：要远程下发、要放进 assets、宿主本来就用 JSON 加载流程、要 `push` 到 runner。用 `export com.foo.flows.XxxFlows#method -o 路径`，设备上会确认 JSON 解析回来和 DSL 完全相等；流程里有内联代码时不能导出，会说明在哪——需要的话把那段代码注册成名字（`Apex.registerMatcher` / `registerAction`）再导出。DSL 仍是唯一的源头，JSON 不要手改。
+- 宿主还没打开状态悬浮窗时，建议在 debug 构建里打开（`new ApexConfig.Builder().setStatusOverlay(BuildConfig.DEBUG)`）：人在手机上验收时能直接看到运行到哪一步、为什么失败。
 - 汇报：流程做了什么、代码在哪、每个状态对应哪个页面、做了哪些假设、哪些步骤需要人、真机运行结果（包括自测），以及导没导出 JSON、为什么。

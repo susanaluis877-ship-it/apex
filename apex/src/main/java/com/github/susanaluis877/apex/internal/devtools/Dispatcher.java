@@ -12,6 +12,7 @@ import com.github.susanaluis877.apex.flow.FlowWriter;
 import com.github.susanaluis877.apex.flow.Interceptor;
 import com.github.susanaluis877.apex.flow.State;
 import com.github.susanaluis877.apex.internal.Registry;
+import com.github.susanaluis877.apex.internal.engine.RunMonitor;
 import com.github.susanaluis877.apex.match.Selector;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 
@@ -44,7 +45,8 @@ import java.util.concurrent.TimeUnit;
  *       最后一行 {"ok": true, "ev": "result", "result": {...}}。推送失败（客户端断开）时取消运行。
  * </pre>
  *
- * 命令：info、snapshot、find、act、validate、check、run、export、cancel，参数见各处理方法。
+ * 命令：info、snapshot、find、act、validate、check、run、export、cancel、status、overlay，参数见各处理方法。
+ * {@code overlay}：{@code {"cmd": "overlay", "visible": false}} 暂时隐藏状态悬浮窗（截图用），返回有没有悬浮窗。
  *
  * <p>validate、check、run、export 的流程可以是 JSON（{@code "flow": {...}}），也可以是宿主代码里用 Java DSL
  * 写的流程（{@code "flowRef": "com.foo.Flows#addAlarm"}，见 {@link FlowRefs}）。
@@ -110,9 +112,16 @@ public final class Dispatcher {
                 case "cancel":
                     response = ok().put("cancelled", backend.cancelRunning());
                     break;
+                case "status":
+                    response = status(request);
+                    break;
+                case "overlay":
+                    response = ok().put("overlay", backend.setOverlayVisible(request.optBoolean("visible", true)));
+                    break;
                 default:
                     throw new DevtoolsException(DevtoolsException.BAD_REQUEST, "unknown cmd \"" + cmd
-                            + "\" (supported: info, snapshot, find, act, validate, check, run, export, cancel)");
+                            + "\" (supported: info, snapshot, find, act, validate, check, run, export, cancel, status,"
+                            + " overlay)");
             }
         } catch (DevtoolsException e) {
             response = error(e.getCode(), e.getMessage(), e.getPath());
@@ -295,6 +304,32 @@ public final class Dispatcher {
             handle.cancel();
             out.write(error(DevtoolsException.INTERNAL, e.toString(), null).toString());
         }
+    }
+
+    /**
+     * {@code {"cmd": "status", "limit": 50}}：当前或最近一次运行的状态和最后 {@code limit} 条轨迹（-1 为全部），
+     * 包括宿主代码发起的运行。不占用引擎线程，运行中也能查。从没运行过时 {@code run} 为 null。
+     */
+    private JSONObject status(JSONObject request) throws JSONException {
+        RunMonitor.View view = backend.monitor().view();
+        if (view.getFlowId() == null) {
+            return ok().put("run", JSONObject.NULL);
+        }
+        RunResult result = view.getResult();
+        List<TraceEvent> trace = result != null ? result.getTrace() : view.getRecent();
+        int limit = request.optInt("limit", 50);
+        if (limit >= 0 && trace.size() > limit) {
+            trace = trace.subList(trace.size() - limit, trace.size());
+        }
+        JSONArray events = new JSONArray();
+        for (TraceEvent e : trace) {
+            events.put(traceJson(e));
+        }
+        JSONObject run = new JSONObject().put("flowId", view.getFlowId()).putOpt("runId", view.getRunId())
+                .put("running", view.isRunning()).putOpt("state", view.getStateId()).put("step", view.getStep())
+                .put("elapsedMs", view.getElapsedMs()).put("trace", events)
+                .put("result", result != null ? resultJson(result) : JSONObject.NULL);
+        return ok().put("run", run);
     }
 
     /**

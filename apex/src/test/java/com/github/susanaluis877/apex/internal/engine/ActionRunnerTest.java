@@ -139,6 +139,80 @@ public class ActionRunnerTest {
     }
 
     @Test
+    public void scrollDoesNotFlipTheOuterPagerWhenTheListFitsOnScreen() {
+        // ColorOS 便签：「笔记 / 待办」是 ViewPager2，里面的笔记列表一屏放得下时不可滚动
+        ScreenSnapshot s = screen(frame(notesPager(false)));
+        device.show(s);
+        ActionResult to = run(Actions.scrollTo(By.text("missing"), By.id("note_list"), Action.Direction.FORWARD, 10), s);
+        assertEquals(ActionResult.Status.SOFT_FAIL, to.getStatus());
+        assertTrue(to.getMessage(), to.getMessage().contains("is not scrollable now"));
+        ActionResult scroll = run(Actions.scroll(By.text("row"), Action.Direction.FORWARD), s);
+        assertEquals(ActionResult.Status.SOFT_FAIL, scroll.getStatus());
+        assertTrue("没有滚动任何东西", device.log.isEmpty());
+    }
+
+    @Test
+    public void defaultScrollContainerSkipsPagers() {
+        ScreenSnapshot s = screen(frame(notesPager(true)));
+        device.show(s);
+        run(Actions.scroll(Action.Direction.FORWARD), s);
+        assertEquals(Collections.singletonList("scroll:note_list:FORWARD"), device.log);
+
+        // 列表不可滚动时，屏幕上能滚的只有翻页容器：不滚它
+        ScreenSnapshot pagerOnly = screen(frame(notesPager(false)));
+        device.show(pagerOnly);
+        ActionResult r = run(Actions.scrollTo(By.text("missing")), pagerOnly);
+        assertEquals(ActionResult.Status.SOFT_FAIL, r.getStatus());
+        assertTrue(r.getMessage(), r.getMessage().contains("which flips between pages"));
+        assertEquals(1, device.log.size());
+        run(Actions.scroll(By.id("view_pager"), Action.Direction.FORWARD), pagerOnly);
+        assertEquals("写成 container 时照常滚", "scroll:view_pager:FORWARD", device.log.get(1));
+    }
+
+    @Test
+    public void clickTapsTheTargetWhenOnlyAContainerAboveItIsClickable() {
+        // 列表项本身不可点击，点击由 RecyclerView 的触摸监听处理；对 RecyclerView ACTION_CLICK 没反应
+        ScreenSnapshot s = screen(frame(notesPager(false)));
+        device.show(s);
+        ActionResult r = run(Actions.click(By.text("row")), s);
+        assertTrue(r.toString(), r.isOk());
+        assertEquals(Collections.singletonList("tap:498,930"), device.log);
+        assertTrue(r.getMessage(), r.getMessage().contains("it is a container"));
+
+        // 日历月视图：日期格是虚拟节点，可点击的是整个月视图
+        UiNode.Builder cell = new UiNode.Builder().className("android.view.View").desc("10月28日")
+                .bounds(616, 1386, 770, 1628);
+        ScreenSnapshot month = screen(frame(new UiNode.Builder().className("com.coloros.calendar.MonthView")
+                .viewId(PKG + ":id/month").bounds(0, 660, 1080, 2112).clickable(true).child(cell)));
+        device.show(month);
+        assertTrue(run(Actions.click(By.desc("10月28日")), month).isOk());
+        assertEquals("tap:693,1507", device.log.get(1));
+
+        // 普通的一行：可点击的是这一行，照常 ACTION_CLICK
+        ScreenSnapshot row = screen(frame(new UiNode.Builder().className("android.widget.LinearLayout")
+                .viewId(PKG + ":id/row").bounds(0, 400, 1080, 600).clickable(true)
+                .child(text("显示与亮度").bounds(48, 450, 400, 520))));
+        device.show(row);
+        assertTrue(run(Actions.click(By.text("显示与亮度")), row).isOk());
+        assertEquals("click:row", device.log.get(2));
+    }
+
+    /** ViewPager2 → 横向的 RecyclerView → 一页 → 笔记列表 note_list → 一行 note_item。 */
+    private static UiNode.Builder notesPager(boolean listScrollable) {
+        UiNode.Builder item = new UiNode.Builder().className("android.widget.FrameLayout").packageName(PKG)
+                .viewId(PKG + ":id/note_item").bounds(48, 882, 1032, 1087)
+                .child(text("row").bounds(96, 900, 900, 960));
+        UiNode.Builder notes = list("note_list", 0, 107, 1080, 2280).scrollable(listScrollable).clickable(true)
+                .child(item);
+        UiNode.Builder inner = new UiNode.Builder().className("androidx.recyclerview.widget.RecyclerView")
+                .packageName(PKG).bounds(0, 0, 1080, 2280).scrollable(true)
+                .child(new UiNode.Builder().className("android.widget.FrameLayout").packageName(PKG)
+                        .bounds(0, 0, 1080, 2280).child(notes));
+        return new UiNode.Builder().className("androidx.viewpager2.widget.ViewPager2").packageName(PKG)
+                .viewId(PKG + ":id/view_pager").bounds(0, 0, 1080, 2280).scrollable(true).child(inner);
+    }
+
+    @Test
     public void coordinateFallbackRefusesTargetsOutsideTheScreen() {
         // 页面滑入动画中，节点还在屏幕右侧
         ScreenSnapshot s = screen(frame(new UiNode.Builder().className("android.view.View").text("Go")

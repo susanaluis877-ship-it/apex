@@ -19,10 +19,16 @@ public final class AndroidActionExecutor implements ActionExecutor {
 
     private final AccessibilityScreenSource source;
     private final Supplier<AccessibilityService> service;
+    private final Supplier<StatusOverlay> overlay;
 
-    public AndroidActionExecutor(AccessibilityScreenSource source, Supplier<AccessibilityService> service) {
+    /**
+     * @param overlay 当前的状态悬浮窗，没有时返回 null；手势经过它时先让它暂时不接收触摸
+     */
+    public AndroidActionExecutor(AccessibilityScreenSource source, Supplier<AccessibilityService> service,
+                                 Supplier<StatusOverlay> overlay) {
         this.source = source;
         this.service = service;
+        this.overlay = overlay;
     }
 
     @Override
@@ -78,7 +84,15 @@ public final class AndroidActionExecutor implements ActionExecutor {
         if (svc == null) {
             return ActionResult.soft("service unavailable");
         }
-        return GestureDispatcher.dispatch(svc, x1, y1, x2, y2, durationMs);
+        StatusOverlay o = overlay.get();
+        Runnable restore = o != null ? o.stepAside(x1, y1, x2, y2) : null;
+        try {
+            return GestureDispatcher.dispatch(svc, x1, y1, x2, y2, durationMs);
+        } finally {
+            if (restore != null) {
+                restore.run();
+            }
+        }
     }
 
     @Override

@@ -4,6 +4,7 @@ import com.github.susanaluis877.apex.RunHandle;
 import com.github.susanaluis877.apex.RunResult;
 import com.github.susanaluis877.apex.TraceEvent;
 import com.github.susanaluis877.apex.flow.Flow;
+import com.github.susanaluis877.apex.internal.engine.RunMonitor;
 import com.github.susanaluis877.apex.internal.engine.Waiter;
 
 import org.json.JSONException;
@@ -40,6 +41,16 @@ public interface Backend {
 
     /** 宿主代码的类加载器，用来按 {@code flowRef} 加载 Java DSL 写的流程。 */
     ClassLoader classLoader();
+
+    /** 当前或最近一次运行的状态，宿主代码发起的运行也在里面。 */
+    RunMonitor monitor();
+
+    /**
+     * 暂时隐藏或恢复状态悬浮窗，电脑端截图前后调用。隐藏后过几秒会自动恢复，防止客户端中途断开后一直不显示。
+     *
+     * @return 有没有悬浮窗
+     */
+    boolean setOverlayVisible(boolean visible);
 
     interface Task<T> {
         T run(DevtoolsSession session, Waiter waiter) throws Exception;

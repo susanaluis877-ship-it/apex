@@ -21,6 +21,7 @@ import com.github.susanaluis877.apex.internal.engine.Clock;
 import com.github.susanaluis877.apex.internal.engine.EngineConfig;
 import com.github.susanaluis877.apex.internal.engine.FakeDevice;
 import com.github.susanaluis877.apex.internal.engine.FlowEngine;
+import com.github.susanaluis877.apex.internal.engine.RunMonitor;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 
 import org.json.JSONObject;
@@ -154,6 +155,41 @@ public class DispatcherTest {
     }
 
     @Test
+    public void statusShowsTheRunningOrLastRunWhoeverStartedIt() throws Exception {
+        assertTrue(call("{\"cmd\": \"status\"}").isNull("run"));
+
+        // 宿主代码发起的运行：不经过调试桥，只记在 RunMonitor 里
+        backend.monitor.onStart("host#1", "host");
+        backend.monitor.onTrace(new TraceEvent(0, TraceEvent.Type.RUN_START, 4, null, "start"));
+        backend.monitor.onStateEntered("home", 1);
+        backend.monitor.onTrace(new TraceEvent(1200, TraceEvent.Type.STATE_ENTER, 4, "home", "home (step 1)"));
+        JSONObject running = call("{\"cmd\": \"status\"}").getJSONObject("run");
+        assertTrue(running.getBoolean("running"));
+        assertEquals("host", running.getString("flowId"));
+        assertEquals("home", running.getString("state"));
+        assertEquals(1, running.getInt("step"));
+        assertEquals(1200, running.getLong("elapsedMs"));
+        assertEquals(2, running.getJSONArray("trace").length());
+        assertTrue(running.isNull("result"));
+
+        device.show(HOME);
+        device.onClick("start", () -> device.show(DONE));
+        dispatcher.handle("{\"cmd\": \"run\", \"flow\": " + FLOW + "}", line -> { });
+        JSONObject done = call("{\"cmd\": \"status\", \"limit\": 1}").getJSONObject("run");
+        assertFalse(done.getBoolean("running"));
+        assertEquals("SUCCESS", done.getJSONObject("result").getString("status"));
+        assertEquals(1, done.getJSONArray("trace").length());
+        assertEquals("RUN_END", done.getJSONArray("trace").getJSONObject(0).getString("type"));
+    }
+
+    @Test
+    public void overlayCanBeHiddenForScreenshots() throws Exception {
+        JSONObject r = call("{\"cmd\": \"overlay\", \"visible\": false}");
+        assertTrue(r.getBoolean("overlay"));
+        assertEquals(Boolean.FALSE, backend.overlayVisible);
+    }
+
+    @Test
     public void runIsCancelledWhenClientGoesAway() throws Exception {
         backend.hang = true;
         try {
@@ -217,6 +253,8 @@ public class DispatcherTest {
     private final class FakeBackend implements Backend {
 
         final DevtoolsSession session = new DevtoolsSession(device, device, device, EngineConfig.DEFAULT);
+        final RunMonitor monitor = new RunMonitor();
+        Boolean overlayVisible;
         boolean busy;
         boolean hang;
         boolean cancelled;
@@ -245,10 +283,17 @@ public class DispatcherTest {
             if (hang) {
                 sink.accept(new TraceEvent(0, TraceEvent.Type.RUN_START, 4, null, "start"));
             } else {
+                // 和 ApexCore 一样把运行记进 RunMonitor
+                monitor.onStart("demo#1", flow.getId());
                 FlowEngine engine = new FlowEngine("demo#1", flow, Collections.emptyList(), device, device,
                         (Clock) device, device, null, EngineConfig.DEFAULT);
-                engine.setTraceSink(sink);
-                onFinished.accept(engine.run());
+                engine.setTraceSink(e -> {
+                    monitor.onTrace(e);
+                    sink.accept(e);
+                });
+                RunResult result = engine.run();
+                monitor.onFinish(result);
+                onFinished.accept(result);
             }
             return new RunHandle() {
                 @Override
@@ -276,6 +321,17 @@ public class DispatcherTest {
         @Override
         public ClassLoader classLoader() {
             return DispatcherTest.class.getClassLoader();
+        }
+
+        @Override
+        public RunMonitor monitor() {
+            return monitor;
+        }
+
+        @Override
+        public boolean setOverlayVisible(boolean visible) {
+            overlayVisible = visible;
+            return true;
         }
     }
 

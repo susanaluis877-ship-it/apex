@@ -46,7 +46,19 @@ class Toolkit:
             info = bridge.request({"cmd": "info"}, timeout=15)
         except ApexError as e:
             report.append("✗ 连接失败: %s" % e)
-            if e.code == "NO_BRIDGE":
+            wanted = bridge.package
+            if e.code == "NO_BRIDGE" and wanted and wanted not in sockets:
+                try:
+                    installed = bool(adb.shell("pm path %s" % wanted).strip())
+                except ApexError:
+                    installed = False  # 没安装时 pm path 的退出码不是 0
+                if installed:
+                    report.append("  要找的宿主 %s 已安装，但它的调试桥没在运行：要是 debug 构建、调用了 Apex.init，"
+                                  "并且进程在运行（无障碍服务开着时系统会拉起进程）" % wanted)
+                else:
+                    report.append("  要找的宿主 %s 还没安装：用 setup 编译安装并开启服务（宿主是工程里的模块时加 module，"
+                                  "例如 setup --module app）。上面列出的是手机上其他 App 的调试桥" % wanted)
+            elif e.code == "NO_BRIDGE":
                 report.append("  宿主 App 要是 debug 构建、调用了 Apex.init，并且进程在运行（无障碍服务开着时系统会拉起进程）")
             return Output("\n".join(report), ok=False)
         dev = info["device"]
@@ -327,6 +339,58 @@ class Toolkit:
         raise ApexError("BUSY", "flow %s is still running after %ds; wait more or send raw {\"cmd\": \"cancel\"}"
                         % (running, timeout))
 
+    def _overlay(self, visible):
+        """截图前后隐藏 / 恢复宿主的状态悬浮窗；没有悬浮窗、或宿主的 SDK 不支持时返回 False。"""
+        try:
+            return bool(self.bridge.request({"cmd": "overlay", "visible": visible}, timeout=5).get("overlay"))
+        except ApexError:
+            return False
+
+    def _running(self):
+        """正在运行的流程 id（宿主代码或调试桥发起的都算）；没有或拿不到时为 None。"""
+        try:
+            return self.bridge.request({"cmd": "info"}, timeout=5)["device"].get("running")
+        except ApexError:
+            return None
+
+    def _running_output(self, running, screenshot):
+        """有流程在跑时引擎线程被占着，拿不到页面结构：给出它的进度（和原图截图），而不是干等。"""
+        text = ("⚠ 流程 %s 正在运行（例如在宿主界面里点了「运行」），这时拿不到页面结构。下面是它的进度；"
+                "等它结束再 observe，或者 raw {\"cmd\": \"cancel\"} 取消。\n" % running)
+        try:
+            text += self.status(limit=15).text
+        except ApexError as e:
+            text += "（拿不到进度: %s）" % e
+        out = Output(text)
+        if screenshot not in (None, "none"):
+            self._attach_shot(out, None, "plain", Session.current(), "running-%s" % time.strftime("%H%M%S"))
+        return out
+
+    def status(self, limit=40):
+        """当前或最近一次运行的状态、结果和最近的轨迹，包括在宿主 App 界面里点「运行」发起的运行。"""
+        try:
+            resp = self.bridge.request({"cmd": "status", "limit": limit})
+        except ApexError as e:
+            if "unknown cmd" in str(e):
+                raise ApexError("UNSUPPORTED", "宿主里的 Apex SDK 太旧，不支持 status（需要 0.5.0 及以上）")
+            raise
+        run = resp.get("run")
+        if not run:
+            return Output("还没有运行过流程（宿主进程重启后记录会清空）")
+        result = run.get("result")
+        if run["running"]:
+            lines = ["运行中: %s  状态 %s（第 %d 步）  已用 %.1fs" % (
+                run["flowId"], run.get("state") or "-", run["step"], run["elapsedMs"] / 1000.0)]
+        else:
+            lines = ["最近一次: %s  结果 %s  路径: %s  耗时 %.1fs" % (
+                run["flowId"], result["status"], " → ".join(result["path"]) or "-", result["durationMs"] / 1000.0)]
+            if result.get("message"):
+                lines.append("原因: " + result["message"])
+        if run["trace"]:
+            lines.append("轨迹（最后 %d 条）:" % len(run["trace"]))
+            lines.extend(_trace_text(t) for t in run["trace"])
+        return Output("\n".join(lines), ok=run["running"] or result["status"] == "SUCCESS")
+
     def _take(self, wait_ms=0):
         self._busy_note = self._wait_idle()
         resp = self.bridge.request({"cmd": "snapshot", "waitMs": wait_ms})
@@ -340,6 +404,9 @@ class Toolkit:
         why = self._adb_mode_reason()
         if why:
             return self._adb_observe(why, screenshot)
+        running = self._running()
+        if running:
+            return self._running_output(running, screenshot)
         screen = self._take(wait_ms)
         session = Session.current()
         page, new = session.identify(screen)
@@ -376,11 +443,15 @@ class Toolkit:
     def _attach_shot(self, out, screen, mode, session, name):
         if mode in (None, "none"):
             return
+        hidden = self._overlay(False)
         try:
             png = shot.screenshot(self.adb, self._boxes(screen) if mode == "annotated" else None)
         except ApexError as e:
             out.text += "\n（截图失败: %s）" % e
             return
+        finally:
+            if hidden:
+                self._overlay(True)
         path = session.shot_path(name)
         with open(path, "wb") as f:
             f.write(png)
@@ -407,13 +478,16 @@ class Toolkit:
         if why:
             return self._adb_act(action, why, screenshot)
         action, note = self.resolve_action(action)
+        running = self._running()
+        if running:
+            raise ApexError("BUSY", "流程 %s 正在运行，这时不能操作页面。用 status 看它的进度，等它结束，"
+                                    "或者 raw {\"cmd\": \"cancel\"} 取消" % running)
         try:
             before = self.last_screen()
         except ApexError:
             before = None
         session = Session.current()
         expect = _normalize_expect(expect)
-        busy_note = self._wait_idle()
         resp = self.bridge.request({"cmd": "act", "action": action, "waitMs": wait_ms})
         after = Screen(resp["snapshot"])
         stale_note = None
@@ -434,6 +508,10 @@ class Toolkit:
         checks = self._check_expect(expect, after, page, resp["changed"]) if expect else []
         checks += self._check_expect_selectors(expect, after) if expect else []
         warnings = self._warnings(session, before, after, page, new, resp, action, checks)
+        started = self._running()
+        if started:
+            warnings.append("这次操作启动了流程 %s（例如点了宿主界面上的「运行」）。上面的页面是启动那一刻的；"
+                            "之后用 status 看进度和结果，它结束前 observe / act 都拿不到页面" % started)
         dim = self._screen_warning()
         if dim:
             warnings.append(dim)
@@ -447,8 +525,6 @@ class Toolkit:
                                        "  意图: " + intent if intent else ""))
         if note:
             lines.append("  " + note)
-        if busy_note:
-            lines.append(busy_note)
         lines.append("结果: %s%s" % (resp["status"], " — " + resp["message"] if resp.get("message") else ""))
         for nested in resp.get("nested") or []:
             lines.append("  " + nested)
@@ -813,7 +889,7 @@ class Toolkit:
         try:
             for line in self.bridge.stream(dict({"cmd": "run"}, **arg), timeout=timeout):
                 if line.get("ev") == "trace":
-                    text = "+%.3fs %-11s %s" % (line["t"] / 1000.0, line["type"], line["msg"])
+                    text = _trace_text(line)
                     trace.append(text)
                     if stream and not quiet:
                         stream(text)
@@ -889,6 +965,11 @@ class Toolkit:
 
 
 # ---------------------------------------------------------------- 辅助
+
+def _trace_text(line):
+    """协议里的一条轨迹事件 → 和 SDK 日志一样的一行。"""
+    return "+%.3fs %-11s %s" % (line["t"] / 1000.0, line["type"], line["msg"])
+
 
 def render_check(resp):
     names = [s["name"] for s in resp["samples"]]

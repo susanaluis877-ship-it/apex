@@ -42,6 +42,8 @@ public final class FlowEngine {
     private static final int MAX_PATH = 200;
     /** 页面没有变化时，等待记录最多隔这么久写一次。 */
     private static final long WAIT_HEARTBEAT_MS = 5_000;
+    private static final int LOOP_REPEATS = 3;
+    private static final int MAX_LOOP_PERIOD = 4;
 
     private final String runId;
     private final Flow flow;
@@ -67,6 +69,10 @@ public final class FlowEngine {
     private int tick;
     private Long lastWaitFingerprint;
     private long lastWaitLoggedAt;
+    /** 最近几次进入状态的记录：状态 id 和进入时页面的指纹，用来发现在不变的页面之间打转。 */
+    private final List<String> recentEntries = new ArrayList<>();
+    private final Set<String> reportedLoops = new HashSet<>();
+    private String loopNote;
 
     /**
      * @param runId              本次运行的编号，出现在每一行日志和结果里
@@ -112,6 +118,9 @@ public final class FlowEngine {
         } catch (RuntimeException e) {
             ApexLog.e("[" + runId + "] engine crashed", e);
             finish = new Finish(Status.ERROR, "engine error: " + e);
+        }
+        if (loopNote != null && (finish.status == Status.TIMEOUT || finish.status == Status.MAX_STEPS)) {
+            finish = new Finish(finish.status, finish.message + "; " + loopNote);
         }
         String endState = current != null ? current.getId() : null;
         if (needsScreenDump(finish.status) && lastScreen != null) {
@@ -234,6 +243,7 @@ public final class FlowEngine {
                         + " on " + summary(screen));
                 notifyStateEntered(entered.getId(), steps);
                 long before = Fingerprint.of(screen);
+                checkLoop(entered.getId(), before);
                 Outcome o = runActions(entered.getId(), entered.getActions(), 0, screen);
                 if (o.fatal()) {
                     return fatal(o.result);
@@ -303,6 +313,47 @@ public final class FlowEngine {
             if (clock.now() >= stateDeadline) {
                 return timeout(retries, candidates);
             }
+        }
+    }
+
+    /**
+     * 进入状态后检查：最近是不是几个状态在同样的页面上一圈一圈地轮流进入（2~4 个状态一圈，连续 {@link #LOOP_REPEATS} 圈）。
+     * 发现时记一条 LOOP 提示（同一圈只记一次），流程以超时或步数超限结束时把它附在原因后面。
+     * 不直接结束流程：「刷新 → 检查 → 刷新」这类轮询本来就会这样。
+     */
+    private void checkLoop(String stateId, long fingerprint) {
+        recentEntries.add(stateId + "@" + Long.toHexString(fingerprint));
+        if (recentEntries.size() > MAX_LOOP_PERIOD * LOOP_REPEATS) {
+            recentEntries.remove(0);
+        }
+        for (int period = 2; period <= MAX_LOOP_PERIOD; period++) {
+            int span = period * LOOP_REPEATS;
+            if (recentEntries.size() < span) {
+                return;
+            }
+            List<String> tail = recentEntries.subList(recentEntries.size() - span, recentEntries.size());
+            boolean repeating = true;
+            for (int i = period; i < span && repeating; i++) {
+                repeating = tail.get(i).equals(tail.get(i - period));
+            }
+            if (!repeating) {
+                continue;
+            }
+            List<String> cycle = new ArrayList<>();
+            for (String entry : tail.subList(span - period, span)) {
+                cycle.add(entry.substring(0, entry.lastIndexOf('@')));
+            }
+            // 同一圈从哪个状态开始看都一样，转到字典序最小的状态开头再去重
+            int first = cycle.indexOf(Collections.min(cycle));
+            List<String> key = new ArrayList<>(cycle.subList(first, cycle.size()));
+            key.addAll(cycle.subList(0, first));
+            if (reportedLoops.add(String.valueOf(key))) {
+                loopNote = "states " + String.join(" → ", key) + " → " + key.get(0) + " repeated " + LOOP_REPEATS
+                        + " times on unchanged screens";
+                tracer.event(Type.LOOP, ApexLogger.WARN, stateId, loopNote + "; their matchers may match the same"
+                        + " page, or their actions may not change it");
+            }
+            return;
         }
     }
 

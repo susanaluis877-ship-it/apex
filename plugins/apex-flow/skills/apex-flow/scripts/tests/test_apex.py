@@ -146,6 +146,15 @@ class SelectorTest(unittest.TestCase):
     def test_click_owner(self):
         self.assertIs(self.screen.node("@4"), apex.click_owner(self.screen.node("@5")))
         self.assertIs(self.screen.node("@1"), apex.click_owner(self.screen.node("@1")))
+        # 可点击的只有整个列表（ColorOS 便签）：SDK 按目标自己的坐标点，落点是目标
+        root = node("android.widget.FrameLayout", 0, [0, 0, 1080, 2400], pkg="com.coloros.note", ch=[
+            node("androidx.recyclerview.widget.RecyclerView", 1, [0, 107, 1080, 2280], id="com.coloros.note:id/note_list",
+                 f=["clickable"], ch=[node("android.widget.FrameLayout", 2, [48, 882, 1032, 1087], ch=[
+                     node("android.widget.TextView", 3, [93, 924, 987, 989], text="ApexLab 天气")])])])
+        notes = apex.Screen({"format": 1, "seq": 1, "pkg": "com.coloros.note", "w": 1080, "h": 2400,
+                             "windows": [{"id": 1, "layer": 1, "active": True, "root": root}]})
+        self.assertIs(notes.node("@3"), apex.click_owner(notes.node("@3")))
+        self.assertIn("是整个容器", apex.render_grep(notes, "ApexLab"))
 
 
 class DiffTest(unittest.TestCase):

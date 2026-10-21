@@ -13,6 +13,6 @@ public class DemoApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        Apex.init(this, new ApexConfig.Builder().setDebug(true).build());
+        Apex.init(this, new ApexConfig.Builder().setDebug(true).setStatusOverlay(true).build());
     }
 }
