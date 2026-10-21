@@ -2,12 +2,14 @@ package com.github.susanaluis877.apex.internal.android;
 
 import android.accessibilityservice.AccessibilityService;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 
 import com.github.susanaluis877.apex.internal.ApexLog;
 import com.github.susanaluis877.apex.internal.engine.ScreenSource;
+import com.github.susanaluis877.apex.node.Range;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.node.UiNode;
 import com.github.susanaluis877.apex.node.UiWindow;
@@ -136,6 +138,26 @@ public final class AccessibilityScreenSource implements ScreenSource {
                 .editable(info.isEditable())
                 .focused(info.isFocused())
                 .visible(info.isVisibleToUser());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            b.hint(str(info.getHintText()));
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            b.stateDescription(str(info.getStateDescription()));
+        }
+        AccessibilityNodeInfo.RangeInfo range = info.getRangeInfo();
+        if (range != null) {
+            b.range(new Range(rangeType(range.getType()), range.getMin(), range.getMax(), range.getCurrent()));
+        }
+        for (AccessibilityNodeInfo.AccessibilityAction action : info.getActionList()) {
+            int id = action.getId();
+            if (id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) {
+                b.canScrollForward(true);
+            } else if (id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) {
+                b.canScrollBackward(true);
+            } else if (id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId()) {
+                b.canSetProgress(true);
+            }
+        }
         int count = info.getChildCount();
         if (count > 0 && depth >= MAX_DEPTH) {
             budget.exceeded = true;
@@ -157,6 +179,17 @@ public final class AccessibilityScreenSource implements ScreenSource {
         map.put(node, infos.get(node.getHandle()));
         for (UiNode child : node.getChildren()) {
             index(child, infos, map);
+        }
+    }
+
+    private static Range.Type rangeType(int type) {
+        switch (type) {
+            case AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT:
+                return Range.Type.INT;
+            case AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT:
+                return Range.Type.PERCENT;
+            default:
+                return Range.Type.FLOAT;
         }
     }
 

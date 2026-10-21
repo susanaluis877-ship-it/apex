@@ -51,7 +51,16 @@ public final class ScreenDumper {
         if (node.getDesc() != null) {
             sb.append(" desc=\"").append(node.getDesc()).append('"');
         }
+        if (node.getHint() != null) {
+            sb.append(" hint=\"").append(node.getHint()).append('"');
+        }
+        if (node.getStateDescription() != null) {
+            sb.append(" state=\"").append(node.getStateDescription()).append('"');
+        }
         sb.append(' ').append(node.getBounds());
+        if (node.getRange() != null) {
+            sb.append(" range=").append(node.getRange());
+        }
         if (node.isClickable()) {
             sb.append(" clickable");
         }
@@ -60,6 +69,14 @@ public final class ScreenDumper {
         }
         if (node.isScrollable()) {
             sb.append(" scrollable");
+            if (node.canScrollForward() || node.canScrollBackward()) {
+                sb.append('(').append(node.canScrollBackward() ? "back" : "")
+                        .append(node.canScrollBackward() && node.canScrollForward() ? "," : "")
+                        .append(node.canScrollForward() ? "fwd" : "").append(')');
+            }
+        }
+        if (node.canSetProgress()) {
+            sb.append(" set-progress");
         }
         if (node.isEditable()) {
             sb.append(" editable");

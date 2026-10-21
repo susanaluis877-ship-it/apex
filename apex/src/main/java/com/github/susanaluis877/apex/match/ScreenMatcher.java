@@ -2,6 +2,9 @@ package com.github.susanaluis877.apex.match;
 
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.Set;
 
 /**
@@ -25,4 +28,11 @@ public abstract class ScreenMatcher {
      * 收集条件树里引用的自定义条件名，用于构建流程时校验是否已注册。
      */
     public abstract void collectCustomNames(Set<String> out);
+
+    /**
+     * 写成和 {@code FlowParser} 相同格式的 JSON，解析回来与本对象相等。
+     *
+     * @throws IllegalArgumentException 内联的 {@code custom(screen -> ...)} 条件不能写成 JSON
+     */
+    abstract JSONObject toJson() throws JSONException;
 }

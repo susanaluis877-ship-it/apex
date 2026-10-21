@@ -1,0 +1,44 @@
+{
+  "id": "settings.brightness_max",
+  "start": "launch",
+  "timeoutMs": 60000,
+  "maxSteps": 20,
+  "states": [
+    {
+      "id": "launch",
+      "match": {"always": true},
+      "actions": [{"type": "launchApp", "package": "com.android.settings"}],
+      "next": ["home", "already_max", "display"]
+    },
+    {
+      "id": "home",
+      "match": {"package": "com.android.settings", "has": {"id": "settings_homepage_container"}},
+      "actions": [
+        {"type": "scrollTo", "target": {"text": "显示与亮度"}, "direction": "forward", "optional": true},
+        {"type": "scrollTo", "target": {"text": "显示与亮度"}, "direction": "backward"},
+        {"type": "click", "target": {"text": "显示与亮度"}}
+      ],
+      "next": ["already_max", "display"]
+    },
+    {
+      "id": "already_max",
+      "match": {"package": "com.android.settings", "has": {"id": "slider", "desc": "8187,亮度"}},
+      "end": "success"
+    },
+    {
+      "id": "display",
+      "match": {
+        "package": "com.android.settings",
+        "has": [{"id": "brightness_slider"}, {"id": "slider", "className": "SeekBar"}],
+        "not": {"has": {"id": "slider", "desc": "8187,亮度"}}
+      },
+      "actions": [{"type": "setProgress", "target": {"id": "slider", "className": "SeekBar"}, "ratio": 1}],
+      "next": ["brightness_done"]
+    },
+    {
+      "id": "brightness_done",
+      "match": {"package": "com.android.settings", "has": {"id": "slider", "desc": "8187,亮度"}},
+      "end": "success"
+    }
+  ]
+}

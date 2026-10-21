@@ -80,6 +80,14 @@ public abstract class Action {
         return Boolean.hashCode(optional) * 31 + Long.hashCode(delayMs);
     }
 
+    /** 整数不带小数点，其他保留到两位小数。 */
+    static String num(double v) {
+        if (v == Math.rint(v) && Math.abs(v) < 1e15) {
+            return Long.toString((long) v);
+        }
+        return String.format(Locale.ROOT, "%.2f", v);
+    }
+
     @Override
     public String toString() {
         String s = describe();
@@ -327,6 +335,134 @@ public abstract class Action {
         @Override
         public int hashCode() {
             return Objects.hash(baseHash(), target, text);
+        }
+    }
+
+    /** 设置滑块、进度条的值：{@code value} 是绝对值，{@code ratio} 是范围内的比例（0~1），二者只有一个。 */
+    public static final class SetProgress extends Action {
+        private final Selector target;
+        private final Double value;
+        private final Double ratio;
+
+        SetProgress(Selector target, Double value, Double ratio, boolean optional, long delayMs) {
+            super(optional, delayMs);
+            this.target = Objects.requireNonNull(target, "target");
+            if ((value == null) == (ratio == null)) {
+                throw new IllegalArgumentException("give exactly one of value and ratio");
+            }
+            if (ratio != null && (ratio < 0 || ratio > 1 || ratio.isNaN())) {
+                throw new IllegalArgumentException("ratio must be within [0, 1]");
+            }
+            if (value != null && (value.isNaN() || value.isInfinite())) {
+                throw new IllegalArgumentException("value must be a finite number");
+            }
+            this.value = value;
+            this.ratio = ratio;
+        }
+
+        public Selector getTarget() {
+            return target;
+        }
+
+        /** 绝对值，按比例设置时为 null。 */
+        public Double getValue() {
+            return value;
+        }
+
+        /** 0~1 的比例，按绝对值设置时为 null。 */
+        public Double getRatio() {
+            return ratio;
+        }
+
+        @Override
+        Action copy(boolean optional, long delayMs) {
+            return new SetProgress(target, value, ratio, optional, delayMs);
+        }
+
+        @Override
+        String describe() {
+            return "setProgress" + target + "=" + (value != null ? num(value) : num(ratio * 100) + "%");
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof SetProgress)) {
+                return false;
+            }
+            SetProgress s = (SetProgress) o;
+            return baseEquals(s) && target.equals(s.target) && Objects.equals(value, s.value)
+                    && Objects.equals(ratio, s.ratio);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(baseHash(), target, value, ratio);
+        }
+    }
+
+    /**
+     * 滚动容器直到目标出现：每次滚动后重新抓快照查找，找到即成功；到底（页面不再变化）或滚了 {@code maxSwipes} 次仍没找到时软失败。
+     * 也可以用来拨动滚轮选择器，直到它显示想要的值。
+     */
+    public static final class ScrollTo extends Action {
+        private final Selector target;
+        private final Selector container;
+        private final Direction direction;
+        private final int maxSwipes;
+
+        ScrollTo(Selector target, Selector container, Direction direction, int maxSwipes, boolean optional,
+                 long delayMs) {
+            super(optional, delayMs);
+            if (maxSwipes < 1) {
+                throw new IllegalArgumentException("maxSwipes must be >= 1");
+            }
+            this.target = Objects.requireNonNull(target, "target");
+            this.container = container;
+            this.direction = Objects.requireNonNull(direction, "direction");
+            this.maxSwipes = maxSwipes;
+        }
+
+        public Selector getTarget() {
+            return target;
+        }
+
+        /** 要滚动的容器；为 null 时用屏幕上第一个可见的可滚动节点。 */
+        public Selector getContainer() {
+            return container;
+        }
+
+        public Direction getDirection() {
+            return direction;
+        }
+
+        public int getMaxSwipes() {
+            return maxSwipes;
+        }
+
+        @Override
+        Action copy(boolean optional, long delayMs) {
+            return new ScrollTo(target, container, direction, maxSwipes, optional, delayMs);
+        }
+
+        @Override
+        String describe() {
+            return "scrollTo" + target + (container != null ? " in " + container : "") + "("
+                    + direction.name().toLowerCase(Locale.ROOT) + ", max " + maxSwipes + ")";
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof ScrollTo)) {
+                return false;
+            }
+            ScrollTo s = (ScrollTo) o;
+            return baseEquals(s) && target.equals(s.target) && Objects.equals(container, s.container)
+                    && direction == s.direction && maxSwipes == s.maxSwipes;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(baseHash(), target, container, direction, maxSwipes);
         }
     }
 

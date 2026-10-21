@@ -1,0 +1,123 @@
+{
+  "id": "clock.alarm_workday_0730",
+  "start": "launch",
+  "timeoutMs": 180000,
+  "maxSteps": 30,
+  "defaults": {"timeoutMs": 15000, "retryIntervalMs": 3000, "maxRetries": 2},
+  "states": [
+    {
+      "id": "launch",
+      "match": {"always": true},
+      "actions": [{"type": "launchApp", "package": "com.coloros.alarmclock"}],
+      "next": ["already_exists", "alarm_list", "other_tab", "stray_panel"]
+    },
+    {
+      "id": "stray_panel",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [{"id": "com.coloros.alarmclock:id/cancel"}, {"id": "com.coloros.alarmclock:id/save"}, {"id": "com.coloros.alarmclock:id/alarm_label"}]
+      },
+      "actions": [{"type": "click", "target": {"id": "com.coloros.alarmclock:id/cancel"}}],
+      "next": ["already_exists", "alarm_list", "other_tab"]
+    },
+    {
+      "id": "other_tab",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": {"id": "com.coloros.alarmclock:id/navigation_label"},
+        "not": {"has": {"desc": "添加闹钟"}}
+      },
+      "actions": [{"type": "click", "target": {"id": "com.coloros.alarmclock:id/alarm"}}],
+      "next": ["already_exists", "alarm_list"]
+    },
+    {
+      "id": "already_exists",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [
+          {"id": "com.coloros.alarmclock:id/toolbar_title", "text": "闹钟"},
+          {"id": "com.coloros.alarmclock:id/timeDisplay", "text": "07:30"},
+          {"id": "com.coloros.alarmclock:id/daysOfWeek_label", "text": "法定工作日 | Apex"}
+        ]
+      },
+      "end": "success"
+    },
+    {
+      "id": "alarm_list",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [{"id": "com.coloros.alarmclock:id/toolbar_title", "text": "闹钟"}, {"desc": "添加闹钟"}],
+        "not": {"has": [
+          {"id": "com.coloros.alarmclock:id/timeDisplay", "text": "07:30"},
+          {"id": "com.coloros.alarmclock:id/daysOfWeek_label", "text": "法定工作日 | Apex"}
+        ]}
+      },
+      "actions": [{"type": "click", "target": {"desc": "添加闹钟"}}],
+      "next": ["new_alarm"]
+    },
+    {
+      "id": "new_alarm",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [{"text": "新建闹钟"}, {"id": "com.coloros.alarmclock:id/save"}, {"id": "com.coloros.alarmclock:id/alarm_label"}],
+        "not": {"has": [
+          {"textMatches": "07小时选择器项目.*", "visible": false},
+          {"textMatches": "30分钟选择器项目.*", "visible": false},
+          {"text": "工作日响铃", "checked": true},
+          {"id": "com.coloros.alarmclock:id/add_alarm_work_day_sub", "text": "法定工作日"},
+          {"id": "com.coloros.alarmclock:id/alarm_label", "text": "Apex"}
+        ]}
+      },
+      "actions": [
+        {"type": "scrollTo", "target": {"textMatches": "07小时选择器项目.*", "visible": false},
+         "container": {"textMatches": "\\d+小时选择器项目.*", "visible": false}, "direction": "backward", "maxSwipes": 24},
+        {"type": "scrollTo", "target": {"textMatches": "30分钟选择器项目.*", "visible": false},
+         "container": {"textMatches": "\\d+分钟选择器项目.*", "visible": false}, "direction": "forward", "maxSwipes": 60},
+        {"type": "click", "target": {"text": "工作日响铃", "checked": false}, "optional": true},
+        {"type": "setText", "target": {"id": "com.coloros.alarmclock:id/alarm_label"}, "text": "Apex"},
+        {"type": "click", "target": {"id": "com.coloros.alarmclock:id/add_alarm_work_day_layout"}}
+      ],
+      "timeoutMs": 60000,
+      "next": ["workday_type_dialog"]
+    },
+    {
+      "id": "workday_type_dialog",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [{"text": "工作日类型"}, {"text": "法定工作日"}, {"text": "单休制工作日（仅休周日）"}]
+      },
+      "actions": [{"type": "click", "target": {"text": "法定工作日"}}],
+      "next": ["ready_to_save", "new_alarm"]
+    },
+    {
+      "id": "ready_to_save",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [
+          {"text": "新建闹钟"},
+          {"id": "com.coloros.alarmclock:id/save"},
+          {"textMatches": "07小时选择器项目.*", "visible": false},
+          {"textMatches": "30分钟选择器项目.*", "visible": false},
+          {"text": "工作日响铃", "checked": true},
+          {"id": "com.coloros.alarmclock:id/add_alarm_work_day_sub", "text": "法定工作日"},
+          {"id": "com.coloros.alarmclock:id/alarm_label", "text": "Apex"}
+        ]
+      },
+      "actions": [{"type": "click", "target": {"id": "com.coloros.alarmclock:id/save"}}],
+      "maxRetries": 0,
+      "next": ["saved"]
+    },
+    {
+      "id": "saved",
+      "match": {
+        "package": "com.coloros.alarmclock",
+        "has": [
+          {"id": "com.coloros.alarmclock:id/toolbar_title", "text": "闹钟"},
+          {"id": "com.coloros.alarmclock:id/timeDisplay", "text": "07:30"},
+          {"id": "com.coloros.alarmclock:id/daysOfWeek_label", "text": "法定工作日 | Apex"}
+        ]
+      },
+      "end": "success"
+    }
+  ]
+}

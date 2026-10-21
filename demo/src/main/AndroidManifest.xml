@@ -1,12 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11 起要声明才能拿到其他应用的启动 intent，launchApp 动作依赖它 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".DemoApp"
         android:allowBackup="false"
         android:label="Apex Demo">
 
-        <!-- 控制台：查看服务状态、运行流程 -->
+        <!-- 流程运行器：查看服务状态、选择并运行流程 -->
         <activity
             android:name=".MainActivity"
             android:exported="true">

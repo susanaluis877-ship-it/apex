@@ -7,6 +7,8 @@ import com.github.susanaluis877.apex.TraceEvent;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class TracerTest {
@@ -28,6 +30,22 @@ public class TracerTest {
         assertEquals("开头之后紧接着的是最近的记录", "e600", events.get(Tracer.HEAD).getMessage());
         assertEquals("e1499", events.get(events.size() - 1).getMessage());
         assertEquals(1_500, events.get(events.size() - 1).getTimeMs());
+    }
+
+    @Test
+    public void sinkReceivesEveryEventAndItsFailuresAreIgnored() {
+        Tracer tracer = new Tracer("f#1", () -> 0L);
+        List<String> seen = new ArrayList<>();
+        tracer.setSink(e -> {
+            seen.add(e.getMessage());
+            if (seen.size() == 1) {
+                throw new IllegalStateException("boom");
+            }
+        });
+        tracer.event(TraceEvent.Type.RUN_START, ApexLogger.INFO, null, "a");
+        tracer.event(TraceEvent.Type.RUN_END, ApexLogger.INFO, null, "b");
+        assertEquals(Arrays.asList("a", "b"), seen);
+        assertEquals(2, tracer.events().size());
     }
 
     @Test

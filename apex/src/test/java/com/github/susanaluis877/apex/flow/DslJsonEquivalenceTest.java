@@ -23,6 +23,7 @@ import static com.github.susanaluis877.apex.match.Match.pkg;
 import static org.junit.Assert.assertEquals;
 
 import com.github.susanaluis877.apex.action.Action;
+import com.github.susanaluis877.apex.action.Actions;
 import com.github.susanaluis877.apex.internal.Registry;
 import com.github.susanaluis877.apex.match.By;
 import com.github.susanaluis877.apex.match.Match;
@@ -92,6 +93,17 @@ public class DslJsonEquivalenceTest {
                 + "     {\"type\": \"scroll\", \"direction\": \"forward\"},"
                 + "     {\"type\": \"scroll\", \"target\": {\"scrollable\": true, \"id\": \"list\"}, \"direction\": \"down\"},"
                 + "     {\"type\": \"setText\", \"target\": {\"className\": \"EditText\"}, \"text\": \"hi\"},"
+                + "     {\"type\": \"setProgress\", \"target\": {\"id\": \"bright\"}, \"ratio\": 1},"
+                + "     {\"type\": \"click\", \"target\": {\"stateDesc\": \"on\", \"stateDescContains\": \"o\","
+                + "      \"progressAtLeast\": 0.5, \"progressAtMost\": 1}},"
+                + "     {\"type\": \"click\", \"target\": {\"id\": \"switch\", \"inside\": {\"id\": \"item\","
+                + "      \"hasDescendant\": [{\"text\": \"07:30\"}, {\"textContains\": \"Apex\"}]}}},"
+                + "     {\"type\": \"click\", \"target\": {\"hasDescendant\": {\"text\": \"x\"}}},"
+                + "     {\"type\": \"setProgress\", \"target\": {\"id\": \"vol\"}, \"value\": 30},"
+                + "     {\"type\": \"scrollTo\", \"target\": {\"text\": \"显示\"}},"
+                + "     {\"type\": \"scrollTo\", \"target\": {\"textMatches\": \"7小时.*\", \"visible\": false},"
+                + "      \"container\": {\"textMatches\": \".*小时.*\", \"visible\": false},"
+                + "      \"direction\": \"backward\", \"maxSwipes\": 24},"
                 + "     {\"type\": \"home\", \"delayMs\": 50},"
                 + "     {\"type\": \"launchApp\", \"package\": \"com.foo\"},"
                 + "     {\"type\": \"sleep\", \"ms\": 1000},"
@@ -125,6 +137,15 @@ public class DslJsonEquivalenceTest {
                                 scroll(Action.Direction.FORWARD),
                                 scroll(By.id("list").scrollable(true), Action.Direction.DOWN),
                                 setText(By.className("EditText"), "hi"),
+                                Actions.setProgressRatio(By.id("bright"), 1),
+                                click(By.stateDesc("on").stateDescContains("o").progressAtLeast(0.5).progressAtMost(1)),
+                                click(By.id("switch").inside(By.id("item").hasDescendant(By.text("07:30"),
+                                        By.textContains("Apex")))),
+                                click(By.hasDescendant(By.text("x"))),
+                                Actions.setProgress(By.id("vol"), 30),
+                                Actions.scrollTo(By.text("显示")),
+                                Actions.scrollTo(By.textMatches("7小时.*").visible(false),
+                                        By.textMatches(".*小时.*").visible(false), Action.Direction.BACKWARD, 24),
                                 home().delayMs(50),
                                 launchApp("com.foo"),
                                 sleep(1000),
@@ -137,6 +158,8 @@ public class DslJsonEquivalenceTest {
 
         assertEquals(dsl, FlowParser.parse(json));
         assertEquals(swipeRatio(0.5, 0.8, 0.5, 0.2), swipeRatio(0.5, 0.8, 0.5, 0.2));
+        // 反过来：DSL 写成 JSON 再解析回来也相等（toJson 内部会校验，这里再确认一次）
+        assertEquals(dsl, FlowParser.parse(FlowWriter.toJson(dsl)));
     }
 
     static String resource(String name) throws Exception {

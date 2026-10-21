@@ -11,6 +11,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import com.github.susanaluis877.apex.node.Range;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.node.UiNode;
 
@@ -19,6 +20,66 @@ import org.junit.Test;
 import java.util.regex.PatternSyntaxException;
 
 public class SelectorTest {
+
+    @Test
+    public void progressAndStateDescription() {
+        UiNode.Builder max = new UiNode.Builder().className("android.widget.SeekBar").viewId("p:id/slider")
+                .range(new Range(Range.Type.INT, 0, 8187, 8187)).stateDescription("100%").bounds(0, 0, 10, 10);
+        UiNode.Builder half = new UiNode.Builder().className("android.widget.SeekBar").viewId("p:id/volume")
+                .range(new Range(Range.Type.INT, 0, 100, 50)).bounds(0, 20, 10, 30);
+        ScreenSnapshot s = screen(frame(max, half, text("plain")));
+        assertEquals("slider", shortId(By.id("slider").progressAtLeast(1).findFirst(s)));
+        assertNull(By.id("volume").progressAtLeast(0.6).findFirst(s));
+        assertEquals("volume", shortId(By.progressAtMost(0.5).findFirst(s)));
+        assertEquals("slider", shortId(By.stateDesc("100%").findFirst(s)));
+        assertEquals("slider", shortId(By.stateDescContains("100").findFirst(s)));
+        assertNull("没有范围的节点不匹配", By.text("plain").progressAtMost(1).findFirst(s));
+        String why = By.id("volume").progressAtLeast(0.9).explainMismatch(s);
+        assertTrue(why, why.contains("all but progressAtLeast=0.9") && why.contains("progress=0.5"));
+        assertEquals(By.progressAtLeast(1).stateDesc("x"), By.stateDesc("x").progressAtLeast(1));
+        try {
+            By.progressAtLeast(1.5);
+            throw new AssertionError("expected IllegalArgumentException");
+        } catch (IllegalArgumentException expected) {
+            // 比例必须在 0~1
+        }
+    }
+
+    @Test
+    public void relationalConditionsKeepTwoTextsInTheSameItem() {
+        // 两个闹钟：07:30 叫「起床」，08:00 叫「Apex」。分开写两个 has 会误判“07:30 的 Apex 已存在”
+        ScreenSnapshot s = screen(frame(
+                alarm("a1", "07:30", "法定工作日 | 起床", false),
+                alarm("a2", "08:00", "法定工作日 | Apex", true)));
+        Selector wanted = By.id("alarm_item").hasDescendant(By.text("07:30"), By.textContains("Apex"));
+        assertNull(wanted.findFirst(s));
+        assertEquals("08:00 那一行", "a2", tag(By.id("alarm_item").hasDescendant(By.text("08:00"),
+                By.textContains("Apex")).findFirst(s)));
+        UiNode toggle = By.id("switch").inside(By.id("alarm_item").hasDescendant(By.text("08:00"))).findFirst(s);
+        assertTrue(toggle.isChecked());
+        assertNull(By.id("switch").inside(By.text("nothing")).findFirst(s));
+        String why = wanted.explainMismatch(s);
+        assertTrue(why, why.contains("match all but hasDescendant{"));
+        assertEquals(By.id("x").hasDescendant(By.text("a")).hasDescendant(By.text("b")),
+                By.id("x").hasDescendant(By.text("a"), By.text("b")));
+    }
+
+    private static UiNode.Builder alarm(String tag, String time, String label, boolean on) {
+        return new UiNode.Builder().className("android.widget.LinearLayout").viewId("p:id/alarm_item").desc(tag)
+                .clickable(true).bounds(0, 0, 1080, 200)
+                .child(new UiNode.Builder().className("android.widget.TextView").text(time).bounds(0, 0, 400, 100))
+                .child(new UiNode.Builder().className("android.widget.TextView").text(label).bounds(0, 100, 400, 200))
+                .child(new UiNode.Builder().className("android.widget.Switch").viewId("p:id/switch").checkable(true)
+                        .checked(on).bounds(900, 50, 1000, 150));
+    }
+
+    private static String tag(UiNode n) {
+        return n == null ? null : n.getDesc();
+    }
+
+    private static String shortId(UiNode n) {
+        return n == null ? null : n.getViewId().substring(n.getViewId().indexOf(":id/") + 4);
+    }
 
     @Test
     public void textVariants() {

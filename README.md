@@ -6,8 +6,9 @@
 
 - 纯 Java，无三方依赖，minSdk 24
 - 流程可以用 Java DSL 写，也可以用 JSON 写（方便远程下发）
-- 支持节点点击、坐标点击和滑动、滚动、输入文本、返回/Home、启动 App，也可以用代码写条件和动作
+- 支持节点点击、坐标点击和滑动、滚动、滚动查找、拖动滑块、输入文本、返回/Home、启动 App，也可以用代码写条件和动作
 - 每次运行都有完整的运行轨迹，失败时能看到每一步做了什么、卡在哪里
+- 配套 Claude Code 插件：只需描述想要的流程，AI 在真机上自己看页面、探索、写流程、校验并运行，见[让 AI 编写流程](#让-ai-编写流程)
 
 ## 接入
 
@@ -27,7 +28,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.3.2")
+    implementation("com.github.susanaluis877-ship-it:apex:0.4.0")
 }
 ```
 
@@ -158,6 +159,10 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 | `id` | 短名 `submit` 匹配任意包下的 `:id/submit`，全名 `com.foo:id/submit` 精确匹配 |
 | `className` | 简单类名 `Button` 或全名 `android.widget.Button` |
 | `clickable` / `enabled` / `checked` / `selected` / `scrollable` | 状态过滤 |
+| `stateDesc` / `stateDescContains` | 状态描述（API 30+），例如开关的「已开启」、滑块的「100%」 |
+| `progressAtLeast` / `progressAtMost` | 滑块、进度条当前值在范围内的比例（0~1），`progressAtLeast(1)` 表示已经拉满；没有范围的节点不匹配 |
+| `hasDescendant` | 节点下面要有匹配的子孙（可以写多个），例如同时含有「07:30」和「Apex」的那一行：`By.id("item").hasDescendant(By.text("07:30"), By.textContains("Apex"))` |
+| `inside` | 节点要在匹配的祖先里面，例如那一行里的开关：`By.id("switch").inside(row)` |
 | `visible` | 默认只匹配用户可见的节点；设为 `false` 时可见和不可见的都匹配 |
 
 有多个节点匹配时取第一个，顺序是窗口从上到下、窗口内先序遍历。
@@ -170,6 +175,8 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 | `tap` | `x`、`y`，或 `xRatio`、`yRatio`（0~1），可选 `durationMs` | `tap(x, y)` / `tapRatio(0.5, 0.9)` |
 | `swipe` | `from`、`to`（`[x, y]`），或 `fromRatio`、`toRatio`，可选 `durationMs` | `swipe(...)` / `swipeRatio(...)` |
 | `scroll` | `direction`：`forward`、`backward`、`up`、`down`、`left`、`right`，可选 `target` | `scroll(direction)` / `scroll(By..., direction)` |
+| `scrollTo` | `target`，可选 `container`、`direction`（默认 `forward`）、`maxSwipes`（默认 10） | `scrollTo(By...)` / `scrollTo(target, container, direction, maxSwipes)` |
+| `setProgress` | `target`，加上 `value`（绝对值）或 `ratio`（0~1） | `setProgress(By..., value)` / `setProgressRatio(By..., ratio)` |
 | `setText` | `target`、`text` | `setText(By..., "text")` |
 | `back` / `home` / `recents` / `notifications` | 无 | `back()` 等 |
 | `launchApp` | `package` | `launchApp("com.foo")` |
@@ -182,6 +189,10 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 - `delayMs`，DSL 写 `.delayMs(ms)`：执行前先等一会儿。
 
 `click` 的 `auto` 模式先对目标或它最近的可点击祖先执行节点点击，不成功再按节点中心坐标点击。自绘 View、WebView、Flutter 页面建议直接用 `gesture` 模式。
+
+- **`scroll`**：很多列表只支持 `forward`/`backward`，不支持 `up`/`down`。方向动作失败时会自动换成对应的 `forward`/`backward`，再不行就在容器范围内滑动。
+- **`scrollTo`**：滚动容器（默认第一个可滚动的区域），每次滚动后重新查找，直到 `target` 出现；滚到底或滚了 `maxSwipes` 次还没找到算软失败。也能拨动滚轮选择器：容器和目标都是选择器那一列，目标里写想要的值，例如 `{"textMatches": "7小时.*", "visible": false}`（这类虚拟节点常被系统标成不可见）。
+- **`setProgress`**：目标可以是滑块本身，也可以是包着滑块的那一行。已经是目标值时直接成功；节点不支持直接设值时按比例位置点击。
 
 ### 用 JSON 定义
 
@@ -207,6 +218,8 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 ```
 
 顶层还可以写上面“流程级设置”里的各项（`defaults` 是一个对象）；状态和拦截器里可以写各自的超时、重试次数。更完整的例子见 `demo/src/main/assets/demo_flow.json`。
+
+**DSL 转 JSON。** `FlowWriter.toJson(flow)` 把 DSL 写的流程转成 JSON，并确认解析回来与原流程相等；流程里有内联的 `custom(screen -> ...)` / `run(ctx -> ...)` 时抛 `IllegalArgumentException`，说明在哪个状态、哪个动作。
 
 ```java
 try {
@@ -251,7 +264,7 @@ try {
 **条件函数能用到的信息：**
 
 - 快照 `ScreenSnapshot` 提供包名、Activity、窗口（从上到下）、全部节点 `nodes()` 和屏幕尺寸。
-- 节点 `UiNode` 提供文本、id、位置、状态，以及 `getParent()` / `getChildren()`。
+- 节点 `UiNode` 提供文本、描述、id、位置、状态，以及 `getParent()` / `getChildren()`。滑块有 `getRange()`（最小、最大、当前值），可滚动容器有 `canScrollForward()` / `canScrollBackward()`，另外还有输入框提示 `getHint()`（API 26+）和状态描述 `getStateDescription()`（API 30+，例如开关的「已开启」）。
 - `By...findFirst(screen)` / `findAll(screen)` 可以在快照里找节点。
 
 条件可以和其他条件组合，例如 `allOf(pkg("com.foo"), custom(...))`，也可以用在拦截器上。
@@ -351,6 +364,51 @@ By.id("demo_claim").enabled(true).explainMismatch(screen);
 // "1 node(s) match all but enabled=true, e.g. Button id=...:id/demo_claim ... (enabled=false)"，匹配时返回 null
 ```
 
+## 让 AI 编写流程
+
+以前写流程要先用 uiauto.dev 之类的工具看页面、找特征，再一步一步告诉 AI 怎么写。现在只需要描述想要的流程，例如「打开设置把亮度调到最高」，AI 会自己完成：
+
+0. 准备环境：宿主没装、无障碍服务没开时，用 adb 编译安装宿主（点掉手机上的安装确认）并在设置里开启服务。
+1. 通过宿主 App 里的 Apex 调试桥看真机屏幕：整理过的页面结构（每个可操作元素带编号、类型、标签、状态）加上带编号框的截图。
+2. 像人一样探索：先定计划和里程碑，每一步带着意图和预期去做，看结果判断是否在推进；走错了会收到提醒（页面没变化、离开了目标 App、弹窗、在原地打转）。
+3. 写流程代码：在宿主项目里用 Java DSL 写（复杂场景可以直接写代码判断和操作），用探索记录里的成功路径、每个页面独有的特征和验证过的选择器。
+4. 编译安装（一般几秒到几十秒），校验：在设备上加载流程，并拿探索时保存的页面样本检查每个状态的条件（有没有匹配错页面、多个候选同时匹配、拦截器误伤）。
+5. 真机运行，读轨迹改代码，直到通过；再换个起点、在目标已经达成时各跑一次。
+6. 只在项目需要 JSON（远程下发、放进 assets）时，由 SDK 把 DSL 导出成 JSON，并确认解析回来和 DSL 完全相等。
+
+交付的是固化下来的流程代码，运行时不需要 AI。
+
+**安装插件**（Claude Code）：
+
+```
+/plugin marketplace add susanaluis877-ship-it/apex
+/plugin install apex-flow@apex
+```
+
+插件包含 skill（工作方法和流程格式速查）、MCP 服务（`observe`、`act` 等工具，一次返回页面结构和截图）和一个防误操作的钩子。也可以不装插件，直接用命令行：
+
+```bash
+A=plugins/apex-flow/skills/apex-flow/scripts/apex.py
+python3 $A doctor                                   # 检查环境
+python3 $A setup --module app                       # 首次安装宿主、开启无障碍服务（必要时用 adb 在界面上点）
+python3 $A observe --shot annotated                 # 看页面
+python3 $A act click @13 --intent "进入显示设置" --expect 亮度
+python3 $A deploy                                   # 改了 DSL 后：编译、覆盖安装、等服务重连
+python3 $A run com.foo.flows.SettingsFlows#brightnessMax   # 运行宿主代码里的流程，实时输出轨迹
+python3 $A export com.foo.flows.SettingsFlows#brightnessMax -o app/src/main/assets/flows/brightness.json
+```
+
+只需要 Python 3.8+ 和 adb，没有其他依赖。`-h` 查看全部命令。
+
+**前提：**
+
+- 宿主 App 是 debug 构建（debuggable），调用了 `Apex.init`，并且无障碍服务已开启。
+- `run`、`check`、`validate`、`export` 可以直接引用宿主代码里的 DSL 流程（`类名#静态方法`，方法无参、返回 `Flow`），调试桥用反射在宿主进程里构建它。
+- 调试桥只在 debuggable 包的主进程里启动，监听抽象 Unix socket `apex_<包名>`，只接受 adb（shell）、root 和应用自己的连接；不需要 INTERNET 权限，不往 manifest 里加任何东西。release 包里永远不会启动。不想在 debug 包里启动时：`new ApexConfig.Builder().setDevtools(false)`。
+- 探索记录保存在当前目录的 `.apex/`（可用 `APEX_HOME` 修改）。
+
+**不要同时用 uiautomator 类工具。** `uiautomator dump`、uiautomator2（uiauto.dev）、Appium、Maestro 连接 UiAutomation 期间，系统会让所有无障碍服务断开，Apex 也拿不到屏幕；它们看到的节点树也和 Apex 不完全一样。
+
 ## 注意事项
 
 - **自定义服务名称。** 用同名资源覆盖 `apex_accessibility_label` 和 `apex_accessibility_description`，demo 里有例子。
@@ -369,7 +427,9 @@ By.id("demo_claim").enabled(true).explainMismatch(screen);
 - **上架 Google Play。** 使用无障碍 API 需要在 Play Console 里声明用途，并在应用内做显著披露。自动操作其他 App 是常见的拒审原因。
 - **开启服务的系统限制：**
   - Android 13 及以上，非应用商店安装的 App 要先在应用信息里“允许受限设置”，才能开启服务。
-  - 很多机型上，强制停止 App 后服务会被关掉，需要重新开启。
+  - 强制停止宿主 App（设置里的「强行停止」、`am force-stop`、部分清理加速软件）后，系统会把它的服务从已开启列表里移除，需要重新开启。这是 Android 本身的行为，所有机型都一样。
+  - uiautomator 类工具运行期间服务会暂时断开，见上一节。
+- **终止状态的动作是尽力而为。** 进入 `end` 状态后会执行它的动作，但动作失败也照样结束流程。
 - **节点信息的局限：**
   - Compose（未开启 `testTagsAsResourceId` 时）和 Flutter 页面通常没有 view id，可以改用文本、描述或坐标手势。
   - WebView 的节点可能不完整。
@@ -379,7 +439,10 @@ By.id("demo_claim").enabled(true).explainMismatch(screen);
 
 ## Demo
 
-`demo` 模块有一组用来演示的页面：首页 → 任务页 → 完成页，可以选择弹出广告、走售罄分支、或者第一次点击无效；另外还有一个控制台页面。
+`demo` 模块是一个流程运行器：
+
+- **流程列表**：列出代码里用 Java DSL 写的流程（在 `CodeFlows` 里登记）、打包在 `assets/flows/` 里的 JSON，以及从电脑推送的 JSON（`apex.py push`，保存在 `files/flows/`），点「运行」执行，失败时显示完整轨迹。
+- **内置演示**：一组演示页面（首页 → 任务页 → 完成页），可以选择弹出广告、走售罄分支、或者第一次点击无效。
 
 ```bash
 ./gradlew :demo:installDebug
@@ -396,7 +459,9 @@ adb shell am start -n com.github.susanaluis877.apex.demo/.MainActivity --es auto
 
 `autorun` 参数：
 
-- `json` / `dsl`：运行对应写法的流程。
+- `flow`：运行流程列表里的某个流程，例如 `--es autorun flow --es flow dark_mode_on`。
+- `json` / `dsl`：用对应写法运行内置演示。
+- `open`：只打开演示首页不运行，供 `apex.py run` 从电脑上运行。
 - `dump`：导出当前屏幕。
 
 场景开关：

@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * 流程状态机的执行引擎。在调用线程上同步运行一个流程直到结束，一个实例只能运行一次。
@@ -96,6 +97,11 @@ public final class FlowEngine {
         this.runner = new ActionRunner(source, executor, waiter, tracer);
     }
 
+    /** 每条轨迹事件产生时同步回调，在引擎线程上调用；回调抛出的异常会被记录并忽略。必须在 {@link #run()} 之前设置。 */
+    public void setTraceSink(Consumer<TraceEvent> sink) {
+        tracer.setSink(sink);
+    }
+
     public RunResult run() {
         startedAt = clock.now();
         tracer.start(startedAt);
@@ -146,7 +152,7 @@ public final class FlowEngine {
                         + describe(lastScreen));
             }
             if (!firstTick) {
-                settle();
+                Settler.settle(waiter, clock, config);
                 if (waiter.isCancelled()) {
                     return new Finish(Status.CANCELLED, "cancelled");
                 }
@@ -296,20 +302,6 @@ public final class FlowEngine {
             }
             if (clock.now() >= stateDeadline) {
                 return timeout(retries, candidates);
-            }
-        }
-    }
-
-    /** 等界面安静下来：没有事件时最多等一个轮询间隔；有事件时等到安静 quietMs，最长 settleMaxMs。 */
-    private void settle() {
-        long start = clock.now();
-        if (!waiter.awaitEvent(config.pollIntervalMs)) {
-            return;
-        }
-        while (!waiter.isCancelled()) {
-            long remaining = config.settleMaxMs - (clock.now() - start);
-            if (remaining <= 0 || !waiter.awaitEvent(Math.min(config.quietMs, remaining))) {
-                return;
             }
         }
     }

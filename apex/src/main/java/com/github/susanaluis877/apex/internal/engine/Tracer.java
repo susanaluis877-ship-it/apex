@@ -8,6 +8,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * 一次运行的轨迹记录器：每条事件都完整记录（有上限），同时按日志级别输出，每行带 {@code [runId]} 前缀。
@@ -25,10 +26,16 @@ final class Tracer {
     private final Deque<TraceEvent> tail = new ArrayDeque<>();
     private long startedAt;
     private int dropped;
+    private Consumer<TraceEvent> sink;
 
     Tracer(String runId, Clock clock) {
         this.runId = runId;
         this.clock = clock;
+    }
+
+    /** 每条事件记录后同步回调，例如把轨迹实时推给 devtools 客户端。 */
+    void setSink(Consumer<TraceEvent> sink) {
+        this.sink = sink;
     }
 
     void start(long startedAt) {
@@ -53,6 +60,13 @@ final class Tracer {
         }
         if (ApexLog.isLoggable(priority)) {
             ApexLog.log(priority, "[" + runId + "] " + event, null);
+        }
+        if (sink != null) {
+            try {
+                sink.accept(event);
+            } catch (RuntimeException e) {
+                ApexLog.w("[" + runId + "] trace sink threw " + e);
+            }
         }
     }
 

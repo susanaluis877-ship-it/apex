@@ -20,10 +20,10 @@ import java.util.function.Supplier;
  *   <li>{@link #log} 按顺序记录所有设备操作，例如 {@code click:start}、{@code tap:540,1200}、{@code back}。</li>
  * </ul>
  */
-final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
+public final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
 
-    final List<String> log = new ArrayList<>();
-    final List<Long> logTimes = new ArrayList<>();
+    public final List<String> log = new ArrayList<>();
+    public final List<Long> logTimes = new ArrayList<>();
 
     private long now = 1_000;
     private Supplier<ScreenSnapshot> screen;
@@ -35,48 +35,60 @@ final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
     private final Map<Action.GlobalAction, Runnable> globalEffects = new HashMap<>();
     private final Map<String, ActionResult> clickResults = new HashMap<>();
     private ActionResult launchResult = ActionResult.OK;
+    private final Map<Action.Direction, ActionResult> scrollResults = new HashMap<>();
+    private Runnable scrollEffect;
 
     // ---- 测试脚本 ----
 
-    void show(ScreenSnapshot snapshot) {
+    public void show(ScreenSnapshot snapshot) {
         show(() -> snapshot);
     }
 
-    void show(Supplier<ScreenSnapshot> supplier) {
+    public void show(Supplier<ScreenSnapshot> supplier) {
         screen = supplier;
         pendingEvent = true;
     }
 
     /** 在相对当前时间 {@code delayMs} 之后执行。 */
-    void after(long delayMs, Runnable change) {
+    public void after(long delayMs, Runnable change) {
         at(now + delayMs, change);
     }
 
-    void at(long time, Runnable change) {
+    public void at(long time, Runnable change) {
         scheduled.computeIfAbsent(time, t -> new ArrayList<>()).add(change);
     }
 
-    void onClick(String id, Runnable effect) {
+    public void onClick(String id, Runnable effect) {
         clickEffects.put(id, effect);
     }
 
-    void onGlobal(Action.GlobalAction kind, Runnable effect) {
+    public void onGlobal(Action.GlobalAction kind, Runnable effect) {
         globalEffects.put(kind, effect);
     }
 
-    void clickResult(String id, ActionResult result) {
+    public void clickResult(String id, ActionResult result) {
         clickResults.put(id, result);
     }
 
-    void launchResult(ActionResult result) {
+    /** 某个方向的节点滚动返回 {@code result}（默认成功）。 */
+    public void scrollResult(Action.Direction direction, ActionResult result) {
+        scrollResults.put(direction, result);
+    }
+
+    /** 每次滚动成功（节点动作或滑动手势）后执行。 */
+    public void onScroll(Runnable effect) {
+        scrollEffect = effect;
+    }
+
+    public void launchResult(ActionResult result) {
         launchResult = result;
     }
 
-    void serviceDown(boolean down) {
+    public void serviceDown(boolean down) {
         serviceDown = down;
     }
 
-    void cancel() {
+    public void cancel() {
         cancelled = true;
     }
 
@@ -106,6 +118,16 @@ final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
     @Override
     public ActionResult scrollNode(UiNode node, Action.Direction direction) {
         record("scroll:" + shortId(node) + ":" + direction);
+        ActionResult result = scrollResults.getOrDefault(direction, ActionResult.OK);
+        if (result.isOk() && scrollEffect != null) {
+            scrollEffect.run();
+        }
+        return result;
+    }
+
+    @Override
+    public ActionResult setProgress(UiNode node, float value) {
+        record("setProgress:" + shortId(node) + "=" + value);
         return ActionResult.OK;
     }
 
@@ -132,6 +154,9 @@ final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
             }
         } else {
             record("swipe:" + x1 + "," + y1 + "->" + x2 + "," + y2);
+            if (scrollEffect != null) {
+                scrollEffect.run();
+            }
         }
         return ActionResult.OK;
     }
@@ -159,7 +184,7 @@ final class FakeDevice implements ScreenSource, ActionExecutor, Clock, Waiter {
         return now;
     }
 
-    long elapsedSince(long start) {
+    public long elapsedSince(long start) {
         return now - start;
     }
 

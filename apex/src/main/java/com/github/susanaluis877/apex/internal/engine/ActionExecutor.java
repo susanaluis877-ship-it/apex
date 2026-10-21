@@ -16,6 +16,9 @@ public interface ActionExecutor {
 
     ActionResult setText(UiNode node, String text);
 
+    /** {@code ACTION_SET_PROGRESS}，{@code value} 是节点取值范围内的绝对值。 */
+    ActionResult setProgress(UiNode node, float value);
+
     /** 从 (x1, y1) 移动到 (x2, y2) 的单指手势；两点相同时就是点击或长按。 */
     ActionResult gesture(int x1, int y1, int x2, int y2, long durationMs);
 

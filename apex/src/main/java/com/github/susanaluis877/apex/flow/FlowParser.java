@@ -55,16 +55,62 @@ public final class FlowParser {
      * @throws FlowParseException JSON 语法错误、字段类型或取值错误、流程校验不通过时
      */
     public static Flow parse(String json) throws FlowParseException {
+        return parseFlow(parseObject(json));
+    }
+
+    /**
+     * 解析单个 selector，格式与流程里 {@code has}、{@code target} 的值相同。
+     *
+     * @throws FlowParseException JSON 语法错误或字段错误时，路径相对于这个 selector
+     */
+    public static Selector parseSelector(String json) throws FlowParseException {
+        return parseSelector(parseObject(json), "");
+    }
+
+    /**
+     * 解析单个页面条件，格式与状态的 {@code match} 相同。按名字引用的自定义条件不检查是否已注册。
+     *
+     * @throws FlowParseException JSON 语法错误或字段错误时，路径相对于这个 matcher
+     */
+    public static ScreenMatcher parseMatcher(String json) throws FlowParseException {
+        return parseMatcher(parseObject(json), "");
+    }
+
+    /**
+     * 解析单个动作，格式与 {@code actions} 数组的元素相同。按名字引用的自定义动作不检查是否已注册。
+     *
+     * @throws FlowParseException JSON 语法错误或字段错误时，路径相对于这个动作
+     */
+    public static Action parseAction(String json) throws FlowParseException {
+        return parseAction(parseObject(json), "");
+    }
+
+    /** 校验问题在 JSON 里的路径，例如 {@code states[1].next[0]}；流程级问题可能是空字符串。 */
+    public static String pathOf(Problem p) {
+        String base;
+        switch (p.getScope()) {
+            case Problem.STATE:
+                base = "states[" + p.getOrdinal() + "]";
+                break;
+            case Problem.INTERCEPTOR:
+                base = "interceptors[" + p.getOrdinal() + "]";
+                break;
+            default:
+                base = "";
+        }
+        String path = p.getField() != null ? join(base, p.getField()) : base;
+        return p.getIndex() >= 0 ? path + "[" + p.getIndex() + "]" : path;
+    }
+
+    private static JSONObject parseObject(String json) throws FlowParseException {
         if (json == null) {
             throw new FlowParseException("", "json is null");
         }
-        JSONObject root;
         try {
-            root = new JSONObject(json);
+            return new JSONObject(json);
         } catch (JSONException e) {
             throw new FlowParseException("", "invalid JSON: " + e.getMessage(), e);
         }
-        return parseFlow(root);
     }
 
     private static Flow parseFlow(JSONObject o) throws FlowParseException {
@@ -341,7 +387,8 @@ public final class FlowParser {
         }
         JSONObject o = (JSONObject) v;
         checkKeys(o, path, "text", "textContains", "textMatches", "desc", "descContains", "descMatches",
-                "id", "className", "clickable", "enabled", "checked", "selected", "scrollable", "visible");
+                "id", "className", "clickable", "enabled", "checked", "selected", "scrollable", "stateDesc",
+                "stateDescContains", "progressAtLeast", "progressAtMost", "hasDescendant", "inside", "visible");
         Selector s = null;
         String value;
         if ((value = optString(o, "text", path)) != null) {
@@ -391,6 +438,42 @@ public final class FlowParser {
         }
         if ((flag = optBoolean(o, "scrollable", path)) != null) {
             s = s == null ? By.scrollable(flag) : s.scrollable(flag);
+        }
+        if ((value = optString(o, "stateDesc", path)) != null) {
+            s = s == null ? By.stateDesc(value) : s.stateDesc(value);
+        }
+        if ((value = optString(o, "stateDescContains", path)) != null) {
+            s = s == null ? By.stateDescContains(value) : s.stateDescContains(value);
+        }
+        Double ratio;
+        if ((ratio = optRatio(o, "progressAtLeast", path)) != null) {
+            s = s == null ? By.progressAtLeast(ratio) : s.progressAtLeast(ratio);
+        }
+        if ((ratio = optRatio(o, "progressAtMost", path)) != null) {
+            s = s == null ? By.progressAtMost(ratio) : s.progressAtMost(ratio);
+        }
+        Object descendants = opt(o, "hasDescendant");
+        if (descendants != null) {
+            String p = join(path, "hasDescendant");
+            List<Selector> list = new ArrayList<>();
+            if (descendants instanceof JSONArray) {
+                JSONArray array = (JSONArray) descendants;
+                if (array.length() == 0) {
+                    throw new FlowParseException(p, "expected at least one selector");
+                }
+                for (int i = 0; i < array.length(); i++) {
+                    list.add(parseSelector(array.opt(i), p + "[" + i + "]"));
+                }
+            } else {
+                list.add(parseSelector(descendants, p));
+            }
+            Selector[] array = list.toArray(new Selector[0]);
+            s = s == null ? By.hasDescendant(array) : s.hasDescendant(array);
+        }
+        Object inside = opt(o, "inside");
+        if (inside != null) {
+            Selector ancestor = parseSelector(inside, join(path, "inside"));
+            s = s == null ? By.inside(ancestor) : s.inside(ancestor);
         }
         if (s == null) {
             throw new FlowParseException(path, "selector needs at least one condition besides visible");
@@ -498,6 +581,29 @@ public final class FlowParser {
                 Selector target = parseSelector(requireValue(o, "target", path), join(path, "target"));
                 return Actions.setText(target, requireString(o, "text", path));
             }
+            case "setProgress": {
+                checkActionKeys(o, path, "target", "value", "ratio");
+                Selector target = parseSelector(requireValue(o, "target", path), join(path, "target"));
+                boolean hasValue = opt(o, "value") != null;
+                if (hasValue == (opt(o, "ratio") != null)) {
+                    throw new FlowParseException(path, "give exactly one of value and ratio");
+                }
+                return hasValue ? Actions.setProgress(target, requireDouble(o, "value", path))
+                        : Actions.setProgressRatio(target, requireDouble(o, "ratio", path));
+            }
+            case "scrollTo": {
+                checkActionKeys(o, path, "target", "container", "direction", "maxSwipes");
+                Selector target = parseSelector(requireValue(o, "target", path), join(path, "target"));
+                Object container = opt(o, "container");
+                Action.Direction direction = parseEnum(o, "direction", path, Action.Direction.class,
+                        Action.Direction.FORWARD);
+                Integer maxSwipes = optInt(o, "maxSwipes", path);
+                if (maxSwipes != null && maxSwipes < 1) {
+                    throw new FlowParseException(join(path, "maxSwipes"), "must be >= 1");
+                }
+                return Actions.scrollTo(target, container != null ? parseSelector(container, join(path, "container"))
+                        : null, direction, maxSwipes != null ? maxSwipes : Actions.DEFAULT_SCROLL_TO_MAX_SWIPES);
+            }
             case "back":
                 checkActionKeys(o, path);
                 return Actions.back();
@@ -558,22 +664,6 @@ public final class FlowParser {
     }
 
     // ---- helpers ----
-
-    private static String pathOf(Problem p) {
-        String base;
-        switch (p.getScope()) {
-            case Problem.STATE:
-                base = "states[" + p.getOrdinal() + "]";
-                break;
-            case Problem.INTERCEPTOR:
-                base = "interceptors[" + p.getOrdinal() + "]";
-                break;
-            default:
-                base = "";
-        }
-        String path = p.getField() != null ? join(base, p.getField()) : base;
-        return p.getIndex() >= 0 ? path + "[" + p.getIndex() + "]" : path;
-    }
 
     private static String join(String path, String key) {
         return path.isEmpty() ? key : path + "." + key;
@@ -679,6 +769,17 @@ public final class FlowParser {
         Object v = requireValue(o, key, path);
         if (!(v instanceof Number)) {
             throw new FlowParseException(join(path, key), "expected number");
+        }
+        return ((Number) v).doubleValue();
+    }
+
+    private static Double optRatio(JSONObject o, String key, String path) throws FlowParseException {
+        Object v = opt(o, key);
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof Number) || !(((Number) v).doubleValue() >= 0 && ((Number) v).doubleValue() <= 1)) {
+            throw new FlowParseException(join(path, key), "expected a number within [0, 1]");
         }
         return ((Number) v).doubleValue();
     }

@@ -4,6 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.github.susanaluis877.apex.action.Actions;
+import com.github.susanaluis877.apex.match.By;
+import com.github.susanaluis877.apex.match.Match;
+
 import org.junit.Test;
 
 public class FlowParserTest {
@@ -69,6 +73,19 @@ public class FlowParserTest {
         assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true},"
                         + " \"actions\": [{\"type\": \"tap\", \"xRatio\": 1.5, \"yRatio\": 0.5}]}"),
                 "states[0].actions[0]", "ratio must be within [0, 1]");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"setProgress\","
+                + " \"target\": {\"id\": \"s\"}, \"value\": 1, \"ratio\": 0.5}]}"), "states[0].actions[0]",
+                "give exactly one of value and ratio");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"setProgress\","
+                + " \"target\": {\"id\": \"s\"}, \"ratio\": 2}]}"), "states[0].actions[0]", "ratio must be within [0, 1]");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": {\"hasDescendant\": []}}}"),
+                "states[0].match.has.hasDescendant", "expected at least one selector");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": {\"inside\": {\"txt\": \"a\"}}}}"),
+                "states[0].match.has.inside.txt", "unknown key");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"has\": {\"progressAtLeast\": 2}}}"),
+                "states[0].match.has.progressAtLeast", "expected a number within [0, 1]");
+        assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"actions\": [{\"type\": \"scrollTo\","
+                + " \"target\": {\"id\": \"s\"}, \"maxSwipes\": 0}]}"), "states[0].actions[0].maxSwipes", "must be >= 1");
         assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"end\": \"ok\"}"),
                 "states[0].end", "expected \"success\" or \"failure\"");
         assertError(flow("{\"id\": \"a\", \"match\": {\"always\": true}, \"next\": [1]}"),
@@ -91,6 +108,40 @@ public class FlowParserTest {
         assertError("{\"id\": \"f\", \"start\": \"a\", \"states\": ["
                         + "{\"id\": \"a\", \"match\": {\"custom\": \"nope\"}, \"end\": \"success\"}]}",
                 "states[0].match", "custom matcher 'nope' is not registered");
+    }
+
+    @Test
+    public void standaloneParsersMatchDsl() throws Exception {
+        assertEquals(By.id("ok").enabled(true), FlowParser.parseSelector("{\"id\": \"ok\", \"enabled\": true}"));
+        assertEquals(Match.allOf(Match.pkg("p"), Match.has(By.text("a"))),
+                FlowParser.parseMatcher("{\"package\": \"p\", \"has\": {\"text\": \"a\"}}"));
+        assertEquals(Actions.click(By.desc("go")).optional(),
+                FlowParser.parseAction("{\"type\": \"click\", \"target\": {\"desc\": \"go\"}, \"optional\": true}"));
+        // 单独解析时不检查自定义名字是否已注册，交给运行时或流程构建
+        assertEquals(Match.custom("nope"), FlowParser.parseMatcher("{\"custom\": \"nope\"}"));
+    }
+
+    @Test
+    public void standaloneParserErrorPathsAreRelative() {
+        assertStandaloneError(() -> FlowParser.parseSelector("{\"idd\": \"x\"}"), "idd", "unknown key");
+        assertStandaloneError(() -> FlowParser.parseMatcher("{\"has\": [{\"text\": 1}]}"), "has[0].text",
+                "expected string");
+        assertStandaloneError(() -> FlowParser.parseAction("{\"type\": \"swipe\"}"), "fromRatio", "required");
+        assertStandaloneError(() -> FlowParser.parseAction("[]"), "", "invalid JSON");
+    }
+
+    private interface Parse {
+        Object run() throws FlowParseException;
+    }
+
+    private static void assertStandaloneError(Parse parse, String path, String reasonPrefix) {
+        try {
+            parse.run();
+            fail("expected FlowParseException");
+        } catch (FlowParseException e) {
+            assertEquals(e.getMessage(), path, e.getPath());
+            assertTrue(e.getMessage(), e.getReason().startsWith(reasonPrefix));
+        }
     }
 
     private static String flow(String firstState) {

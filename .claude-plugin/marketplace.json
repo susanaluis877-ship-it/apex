@@ -1,0 +1,12 @@
+{
+  "name": "apex",
+  "description": "Apex：基于无障碍服务的 Android 自动化 SDK 的开发工具",
+  "owner": { "name": "susanaluis877" },
+  "plugins": [
+    {
+      "name": "apex-flow",
+      "source": "./plugins/apex-flow",
+      "description": "让 AI 在真机上自己探索 App、编写并验证 Apex 流程"
+    }
+  ]
+}

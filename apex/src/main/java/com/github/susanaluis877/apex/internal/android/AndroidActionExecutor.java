@@ -66,6 +66,13 @@ public final class AndroidActionExecutor implements ActionExecutor {
     }
 
     @Override
+    public ActionResult setProgress(UiNode node, float value) {
+        Bundle args = new Bundle();
+        args.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value);
+        return performOnNode(node, AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId(), args);
+    }
+
+    @Override
     public ActionResult gesture(int x1, int y1, int x2, int y2, long durationMs) {
         AccessibilityService svc = service.get();
         if (svc == null) {

@@ -5,6 +5,7 @@ import com.github.susanaluis877.apex.flow.Interceptor;
 import com.github.susanaluis877.apex.match.CustomMatcher;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,20 @@ public final class Registry {
 
     public CustomMatcher matcher(String name) {
         return matchers.get(name);
+    }
+
+    /** 已注册的自定义动作名，按字母排序。 */
+    public List<String> actionNames() {
+        List<String> names = new ArrayList<>(actions.keySet());
+        Collections.sort(names);
+        return names;
+    }
+
+    /** 已注册的自定义条件名，按字母排序。 */
+    public List<String> matcherNames() {
+        List<String> names = new ArrayList<>(matchers.keySet());
+        Collections.sort(names);
+        return names;
     }
 
     /** @return 被替换掉的同 id 拦截器，没有时为 null */

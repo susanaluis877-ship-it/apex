@@ -13,10 +13,8 @@ import com.github.susanaluis877.apex.flow.FlowParseException;
 import com.github.susanaluis877.apex.flow.FlowParser;
 import com.github.susanaluis877.apex.match.By;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Demo 的“领取奖励”流程，分别用 Java DSL 和 JSON（assets/demo_flow.json）定义，两者完全等价。
@@ -57,13 +55,7 @@ final class DemoFlows {
 
     static Flow json(Context context) throws IOException, FlowParseException {
         try (InputStream in = context.getAssets().open("demo_flow.json")) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int n;
-            while ((n = in.read(buffer)) > 0) {
-                out.write(buffer, 0, n);
-            }
-            return FlowParser.parse(new String(out.toByteArray(), StandardCharsets.UTF_8));
+            return FlowParser.parse(FlowStore.read(in));
         }
     }
 }

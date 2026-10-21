@@ -3,6 +3,10 @@ package com.github.susanaluis877.apex.match;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.node.UiNode;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -18,6 +22,10 @@ import java.util.regex.Pattern;
  *   <li>{@code id} 写短名（{@code submit}）时匹配任意包下的 {@code :id/submit}，写全名时精确匹配。</li>
  *   <li>{@code className} 写简单类名（{@code Button}）时匹配类名最后一段，写全名时精确匹配。</li>
  *   <li>{@code textMatches}/{@code descMatches} 要求整段文本匹配正则。</li>
+ *   <li>{@code stateDesc} 匹配状态描述（API 30+，例如开关的「已开启」、滑块的「100%」）。</li>
+ *   <li>{@code progressAtLeast}/{@code progressAtMost} 按滑块、进度条当前值在范围内的比例（0~1）过滤，没有范围的节点不匹配。</li>
+ *   <li>{@code hasDescendant} 要求节点下面有匹配的子孙（例如“同时含有 07:30 和 Apex 的那一行”），
+ *       {@code inside} 要求节点在匹配的祖先里面（例如“那一行里的开关”）。</li>
  *   <li>默认只匹配用户可见的节点，{@code visible(false)} 后可见与不可见都匹配。</li>
  * </ul>
  */
@@ -36,6 +44,12 @@ public final class Selector {
     private Boolean checked;
     private Boolean selected;
     private Boolean scrollable;
+    private String stateDesc;
+    private String stateDescContains;
+    private Double progressAtLeast;
+    private Double progressAtMost;
+    private List<Selector> descendants = Collections.emptyList();
+    private Selector ancestor;
     private boolean visibleOnly = true;
 
     private Pattern textPattern;
@@ -61,6 +75,12 @@ public final class Selector {
         s.checked = checked;
         s.selected = selected;
         s.scrollable = scrollable;
+        s.stateDesc = stateDesc;
+        s.stateDescContains = stateDescContains;
+        s.progressAtLeast = progressAtLeast;
+        s.progressAtMost = progressAtMost;
+        s.descendants = descendants;
+        s.ancestor = ancestor;
         s.visibleOnly = visibleOnly;
         s.textPattern = textPattern;
         s.descPattern = descPattern;
@@ -151,6 +171,82 @@ public final class Selector {
         Selector s = copy();
         s.scrollable = value;
         return s;
+    }
+
+    public Selector stateDesc(String value) {
+        Selector s = copy();
+        s.stateDesc = Objects.requireNonNull(value, "stateDesc");
+        return s;
+    }
+
+    public Selector stateDescContains(String value) {
+        Selector s = copy();
+        s.stateDescContains = Objects.requireNonNull(value, "stateDescContains");
+        return s;
+    }
+
+    /**
+     * 当前值在范围内的比例不小于 {@code ratio}（0~1），例如 {@code progressAtLeast(1)} 表示已经拉到最大。
+     *
+     * @throws IllegalArgumentException ratio 不在 0~1 时
+     */
+    public Selector progressAtLeast(double ratio) {
+        Selector s = copy();
+        s.progressAtLeast = checkRatio(ratio);
+        return s;
+    }
+
+    /** 当前值在范围内的比例不大于 {@code ratio}（0~1），例如 {@code progressAtMost(0)} 表示在最小值。 */
+    public Selector progressAtMost(double ratio) {
+        Selector s = copy();
+        s.progressAtMost = checkRatio(ratio);
+        return s;
+    }
+
+    /**
+     * 节点下面要有匹配每个 {@code selectors} 的子孙（可以是不同的子孙）。多次调用会累加。
+     * 用来表达“同一个列表项里同时有 A 和 B”：{@code By.id("item").hasDescendant(By.text("07:30"), By.text("Apex"))}。
+     */
+    public Selector hasDescendant(Selector... selectors) {
+        Selector s = copy();
+        List<Selector> list = new ArrayList<>(descendants);
+        for (Selector selector : selectors) {
+            list.add(Objects.requireNonNull(selector, "selector"));
+        }
+        s.descendants = Collections.unmodifiableList(list);
+        return s;
+    }
+
+    /** 节点要在某个匹配 {@code selector} 的祖先里面，例如某一行里的开关：{@code By.className("Switch").inside(row)}。 */
+    public Selector inside(Selector selector) {
+        Selector s = copy();
+        s.ancestor = Objects.requireNonNull(selector, "selector");
+        return s;
+    }
+
+    private static boolean hasMatchingDescendant(UiNode node, Selector selector) {
+        for (UiNode child : node.getChildren()) {
+            if (selector.matches(child) || hasMatchingDescendant(child, selector)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasMatchingAncestor(UiNode node, Selector selector) {
+        for (UiNode n = node.getParent(); n != null; n = n.getParent()) {
+            if (selector.matches(n)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static double checkRatio(double ratio) {
+        if (!(ratio >= 0 && ratio <= 1)) {
+            throw new IllegalArgumentException("progress ratio must be within [0, 1]");
+        }
+        return ratio;
     }
 
     /**
@@ -307,12 +403,47 @@ public final class Selector {
             list.add(new Cond(false, "scrollable=" + want, n -> n.isScrollable() == want,
                     n -> "scrollable=" + n.isScrollable()));
         }
+        if (stateDesc != null) {
+            list.add(new Cond(false, "stateDesc=" + quote(stateDesc), n -> stateDesc.equals(n.getStateDescription()),
+                    n -> "stateDesc=" + quote(n.getStateDescription())));
+        }
+        if (stateDescContains != null) {
+            list.add(new Cond(false, "stateDescContains=" + quote(stateDescContains),
+                    n -> n.getStateDescription() != null && n.getStateDescription().contains(stateDescContains),
+                    n -> "stateDesc=" + quote(n.getStateDescription())));
+        }
+        if (progressAtLeast != null) {
+            double want = progressAtLeast;
+            list.add(new Cond(false, "progressAtLeast=" + want,
+                    n -> n.getRange() != null && n.getRange().ratio() >= want - RATIO_EPSILON, Selector::progressOf));
+        }
+        if (progressAtMost != null) {
+            double want = progressAtMost;
+            list.add(new Cond(false, "progressAtMost=" + want,
+                    n -> n.getRange() != null && n.getRange().ratio() <= want + RATIO_EPSILON, Selector::progressOf));
+        }
         if (visibleOnly) {
             list.add(new Cond(false, "visible=true", UiNode::isVisible, n -> "visible=" + n.isVisible()));
+        }
+        // 关系条件要遍历子树或祖先，放在最后，先让便宜的条件把大部分节点排除掉
+        for (Selector d : descendants) {
+            list.add(new Cond(false, "hasDescendant" + d, n -> hasMatchingDescendant(n, d),
+                    n -> "no descendant matches " + d));
+        }
+        if (ancestor != null) {
+            Selector a = ancestor;
+            list.add(new Cond(false, "inside" + a, n -> hasMatchingAncestor(n, a), n -> "no ancestor matches " + a));
         }
         list = Collections.unmodifiableList(list);
         conds = list;
         return list;
+    }
+
+    /** 比例由 float 计算，留一点余量，免得 0.99999 不算拉满。 */
+    private static final double RATIO_EPSILON = 1e-4;
+
+    private static String progressOf(UiNode n) {
+        return n.getRange() == null ? "no range" : "progress=" + n.getRange().ratio() + " (" + n.getRange() + ")";
     }
 
     private static String quote(String s) {
@@ -358,6 +489,44 @@ public final class Selector {
         return result;
     }
 
+    /** 写成和 {@code FlowParser} 相同格式的 JSON，解析回来与本对象相等。 */
+    JSONObject toJson() throws JSONException {
+        JSONObject o = new JSONObject();
+        o.putOpt("text", text);
+        o.putOpt("textContains", textContains);
+        o.putOpt("textMatches", textMatches);
+        o.putOpt("desc", desc);
+        o.putOpt("descContains", descContains);
+        o.putOpt("descMatches", descMatches);
+        o.putOpt("id", id);
+        o.putOpt("className", className);
+        o.putOpt("clickable", clickable);
+        o.putOpt("enabled", enabled);
+        o.putOpt("checked", checked);
+        o.putOpt("selected", selected);
+        o.putOpt("scrollable", scrollable);
+        o.putOpt("stateDesc", stateDesc);
+        o.putOpt("stateDescContains", stateDescContains);
+        o.putOpt("progressAtLeast", progressAtLeast);
+        o.putOpt("progressAtMost", progressAtMost);
+        if (descendants.size() == 1) {
+            o.put("hasDescendant", descendants.get(0).toJson());
+        } else if (!descendants.isEmpty()) {
+            JSONArray array = new JSONArray();
+            for (Selector d : descendants) {
+                array.put(d.toJson());
+            }
+            o.put("hasDescendant", array);
+        }
+        if (ancestor != null) {
+            o.put("inside", ancestor.toJson());
+        }
+        if (!visibleOnly) {
+            o.put("visible", false);
+        }
+        return o;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -380,13 +549,20 @@ public final class Selector {
                 && Objects.equals(enabled, s.enabled)
                 && Objects.equals(checked, s.checked)
                 && Objects.equals(selected, s.selected)
-                && Objects.equals(scrollable, s.scrollable);
+                && Objects.equals(scrollable, s.scrollable)
+                && Objects.equals(stateDesc, s.stateDesc)
+                && Objects.equals(stateDescContains, s.stateDescContains)
+                && Objects.equals(progressAtLeast, s.progressAtLeast)
+                && Objects.equals(progressAtMost, s.progressAtMost)
+                && descendants.equals(s.descendants)
+                && Objects.equals(ancestor, s.ancestor);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(text, textContains, textMatches, desc, descContains, descMatches, id, className,
-                clickable, enabled, checked, selected, scrollable, visibleOnly);
+                clickable, enabled, checked, selected, scrollable, stateDesc, stateDescContains, progressAtLeast,
+                progressAtMost, descendants, ancestor, visibleOnly);
     }
 
     @Override
@@ -405,6 +581,14 @@ public final class Selector {
         append(sb, "checked", checked);
         append(sb, "selected", selected);
         append(sb, "scrollable", scrollable);
+        append(sb, "stateDesc", stateDesc);
+        append(sb, "stateDescContains", stateDescContains);
+        append(sb, "progressAtLeast", progressAtLeast);
+        append(sb, "progressAtMost", progressAtMost);
+        for (Selector d : descendants) {
+            append(sb, "hasDescendant", d);
+        }
+        append(sb, "inside", ancestor);
         if (!visibleOnly) {
             append(sb, "visible", false);
         }

@@ -1,0 +1,100 @@
+{
+  "id": "alarm_delete_apex",
+  "start": "launch",
+  "timeoutMs": 120000,
+  "maxSteps": 30,
+  "states": [
+    {
+      "id": "launch",
+      "match": {"always": true},
+      "actions": [{"type": "launchApp", "package": "com.coloros.alarmclock"}],
+      "next": ["stale_select", "edit_page", "other_tab", "alarm_list"],
+      "timeoutMs": 15000
+    },
+    {
+      "id": "stale_select",
+      "match": {"package": "com.coloros.alarmclock", "has": {"id": "navigation_delete"}},
+      "actions": [{"type": "click", "target": {"id": "coui_toolbar_back_view"}}],
+      "next": ["alarm_list"]
+    },
+    {
+      "id": "edit_page",
+      "match": {"package": "com.coloros.alarmclock", "has": [{"id": "cancel"}, {"id": "save"}, {"id": "alarm_label"}]},
+      "actions": [{"type": "click", "target": {"id": "cancel"}}],
+      "next": ["alarm_list", "other_tab"]
+    },
+    {
+      "id": "other_tab",
+      "match": {"package": "com.coloros.alarmclock",
+                "has": {"id": "normalLable", "text": "闹钟", "selected": false},
+                "not": {"has": {"id": "navigation_delete"}}},
+      "actions": [{"type": "click", "target": {"id": "alarm"}}],
+      "next": ["alarm_list"]
+    },
+    {
+      "id": "alarm_list",
+      "match": {"package": "com.coloros.alarmclock",
+                "has": [{"id": "normalLable", "text": "闹钟", "selected": true}, {"desc": "添加闹钟"}],
+                "not": {"has": {"id": "navigation_delete"}}},
+      "actions": [
+        {"type": "scrollTo", "target": {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"},
+         "container": {"id": "list"}, "maxSwipes": 10, "optional": true},
+        {"type": "scrollTo", "target": {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"},
+         "container": {"id": "list"}, "direction": "backward", "maxSwipes": 10, "optional": true}
+      ],
+      "next": ["list_has_apex", "list_no_apex"],
+      "timeoutMs": 30000
+    },
+    {
+      "id": "list_has_apex",
+      "match": {"package": "com.coloros.alarmclock",
+                "has": [{"id": "normalLable", "text": "闹钟", "selected": true}, {"desc": "添加闹钟"},
+                        {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"}],
+                "not": {"has": {"id": "navigation_delete"}}},
+      "actions": [{"type": "longClick", "target": {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"}}],
+      "next": ["select_apex_only", "select_wrong"]
+    },
+    {
+      "id": "list_no_apex",
+      "match": {"package": "com.coloros.alarmclock",
+                "has": [{"id": "normalLable", "text": "闹钟", "selected": true}, {"desc": "添加闹钟"}],
+                "not": {"anyOf": [{"has": {"id": "navigation_delete"}},
+                                  {"has": {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"}}]}},
+      "end": "success"
+    },
+    {
+      "id": "select_apex_only",
+      "match": {"allOf": [
+        {"package": "com.coloros.alarmclock"},
+        {"has": [{"id": "navigation_delete"},
+                 {"id": "alarm_item_card_bg", "hasDescendant": [
+                   {"id": "daysOfWeek_label", "textMatches": "(.* \\| )?Apex"},
+                   {"id": "alarm_select", "checked": true}]}]},
+        {"not": {"has": {"id": "alarm_item_card_bg", "hasDescendant": [
+                   {"id": "daysOfWeek_label", "textMatches": "(?!(.* \\| )?Apex$).*"},
+                   {"id": "alarm_select", "checked": true}]}}},
+        {"anyOf": [
+          {"has": {"id": "toolbar_title", "text": "已选择 1 项"}},
+          {"allOf": [{"has": {"id": "toolbar_title", "text": "已选择全部项"}},
+                     {"not": {"has": {"id": "daysOfWeek_label", "textMatches": "(?!(.* \\| )?Apex$).*"}}}]}
+        ]}
+      ]},
+      "actions": [{"type": "click", "target": {"id": "navigation_delete"}}],
+      "next": ["alarm_list"],
+      "maxRetries": 0
+    },
+    {
+      "id": "select_wrong",
+      "match": {"package": "com.coloros.alarmclock",
+                "has": {"id": "navigation_delete"},
+                "anyOf": [
+                  {"has": {"id": "alarm_item_card_bg", "hasDescendant": [
+                    {"id": "daysOfWeek_label", "textMatches": "(?!(.* \\| )?Apex$).*"},
+                    {"id": "alarm_select", "checked": true}]}},
+                  {"has": {"id": "toolbar_title", "textMatches": "已选择 ([2-9]|[1-9]\\d+) 项"}}
+                ]},
+      "actions": [{"type": "click", "target": {"id": "coui_toolbar_back_view"}}],
+      "end": "failure"
+    }
+  ]
+}

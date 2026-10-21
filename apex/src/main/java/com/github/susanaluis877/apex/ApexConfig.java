@@ -8,11 +8,13 @@ public final class ApexConfig {
     private final boolean debug;
     private final ApexLogger logger;
     private final Integer logLevel;
+    private final boolean devtools;
 
     private ApexConfig(Builder builder) {
         this.debug = builder.debug;
         this.logger = builder.logger;
         this.logLevel = builder.logLevel;
+        this.devtools = builder.devtools;
     }
 
     /**
@@ -39,11 +41,20 @@ public final class ApexConfig {
         return debug ? ApexLogger.DEBUG : ApexLogger.WARN;
     }
 
+    /**
+     * 是否允许启动调试桥，默认允许。调试桥只在 debuggable 的包（通常是 debug 构建）的主进程里启动，
+     * 供电脑上的 {@code apex.py} 通过 adb 查看页面、试运行动作和流程；release 包里永远不会启动。
+     */
+    public boolean isDevtools() {
+        return devtools;
+    }
+
     public static final class Builder {
 
         private boolean debug;
         private ApexLogger logger;
         private Integer logLevel;
+        private boolean devtools = true;
 
         public Builder setDebug(boolean debug) {
             this.debug = debug;
@@ -64,6 +75,14 @@ public final class ApexConfig {
          */
         public Builder setLogLevel(int priority) {
             this.logLevel = priority;
+            return this;
+        }
+
+        /**
+         * 设为 false 时即使是 debuggable 包也不启动调试桥。
+         */
+        public Builder setDevtools(boolean devtools) {
+            this.devtools = devtools;
             return this;
         }
 

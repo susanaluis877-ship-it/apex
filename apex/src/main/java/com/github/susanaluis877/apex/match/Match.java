@@ -3,6 +3,10 @@ package com.github.susanaluis877.apex.match;
 import com.github.susanaluis877.apex.internal.Registry;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -153,6 +157,11 @@ public final class Match {
         }
 
         @Override
+        JSONObject toJson() throws JSONException {
+            return new JSONObject().put("package", packageName);
+        }
+
+        @Override
         public String toString() {
             return "package=\"" + packageName + "\"";
         }
@@ -200,6 +209,11 @@ public final class Match {
         }
 
         @Override
+        JSONObject toJson() throws JSONException {
+            return new JSONObject().put("activity", activity);
+        }
+
+        @Override
         public String toString() {
             return "activity=\"" + activity + "\"";
         }
@@ -238,6 +252,11 @@ public final class Match {
         }
 
         @Override
+        JSONObject toJson() throws JSONException {
+            return new JSONObject().put("has", selector.toJson());
+        }
+
+        @Override
         public String toString() {
             return "has" + selector;
         }
@@ -273,6 +292,11 @@ public final class Match {
         @Override
         public int hashCode() {
             return matcher.hashCode() * 7;
+        }
+
+        @Override
+        JSONObject toJson() throws JSONException {
+            return new JSONObject().put("not", matcher.toJson());
         }
 
         @Override
@@ -324,6 +348,48 @@ public final class Match {
         @Override
         public int hashCode() {
             return items.hashCode() * 11;
+        }
+
+        /**
+         * 子条件的键按解析器的固定顺序排列、且除 has 外不重复时，合并成一个对象（更好读）；否则写成 allOf 数组。
+         * 两种写法解析回来都和原对象相等。
+         */
+        @Override
+        JSONObject toJson() throws JSONException {
+            List<String> order = Arrays.asList("package", "activity", "has", "not", "allOf", "anyOf", "always",
+                    "custom");
+            JSONObject merged = new JSONObject();
+            JSONArray has = new JSONArray();
+            int last = -1;
+            boolean compact = true;
+            for (ScreenMatcher item : items) {
+                JSONObject json = item.toJson();
+                String key = json.keys().next();
+                int index = order.indexOf(key);
+                if (index < last || index == last && !key.equals("has")) {
+                    compact = false;
+                    break;
+                }
+                last = index;
+                if (key.equals("has")) {
+                    has.put(json.get(key));
+                } else {
+                    merged.put(key, json.get(key));
+                }
+            }
+            if (compact) {
+                if (has.length() == 1) {
+                    merged.put("has", has.get(0));
+                } else if (has.length() > 1) {
+                    merged.put("has", has);
+                }
+                return merged;
+            }
+            JSONArray array = new JSONArray();
+            for (ScreenMatcher item : items) {
+                array.put(item.toJson());
+            }
+            return new JSONObject().put("allOf", array);
         }
 
         @Override
@@ -380,6 +446,15 @@ public final class Match {
         }
 
         @Override
+        JSONObject toJson() throws JSONException {
+            JSONArray array = new JSONArray();
+            for (ScreenMatcher item : items) {
+                array.put(item.toJson());
+            }
+            return new JSONObject().put("anyOf", array);
+        }
+
+        @Override
         public String toString() {
             return "anyOf" + items;
         }
@@ -400,6 +475,11 @@ public final class Match {
 
         @Override
         public void collectCustomNames(Set<String> out) {
+        }
+
+        @Override
+        JSONObject toJson() throws JSONException {
+            return new JSONObject().put("always", true);
         }
 
         @Override
@@ -437,6 +517,12 @@ public final class Match {
         @Override
         public int hashCode() {
             return System.identityHashCode(condition);
+        }
+
+        @Override
+        JSONObject toJson() {
+            throw new IllegalArgumentException("inline custom(screen -> ...) cannot be written as JSON; register it "
+                    + "with Apex.registerMatcher and reference it with Match.custom(name)");
         }
 
         @Override
@@ -487,6 +573,14 @@ public final class Match {
         @Override
         public int hashCode() {
             return name.hashCode() * 17 + args.hashCode();
+        }
+
+        @Override
+        JSONObject toJson() throws JSONException {
+            if (args.isEmpty()) {
+                return new JSONObject().put("custom", name);
+            }
+            return new JSONObject().put("custom", new JSONObject().put("name", name).put("args", new JSONObject(args)));
         }
 
         @Override

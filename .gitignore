@@ -7,3 +7,7 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+
+# apex.py
+__pycache__/
+.apex/

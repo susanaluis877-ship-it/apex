@@ -12,6 +12,7 @@ import com.github.susanaluis877.apex.DumpCallback;
 import com.github.susanaluis877.apex.FlowListener;
 import com.github.susanaluis877.apex.RunHandle;
 import com.github.susanaluis877.apex.RunResult;
+import com.github.susanaluis877.apex.TraceEvent;
 import com.github.susanaluis877.apex.flow.Flow;
 import com.github.susanaluis877.apex.internal.android.AccessibilityScreenSource;
 import com.github.susanaluis877.apex.internal.android.ActivityTracker;
@@ -24,10 +25,13 @@ import com.github.susanaluis877.apex.internal.engine.RunController;
 import com.github.susanaluis877.apex.node.ScreenSnapshot;
 import com.github.susanaluis877.apex.service.ApexAccessibilityService;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * SDK 内部实现，不属于公开 API，宿主不应直接调用。
@@ -50,6 +54,7 @@ public final class ApexCore {
     // volatile 写在其他字段赋值之后，读到 true 时其他字段一定可见
     private volatile boolean initialized;
     private volatile ApexAccessibilityService service;
+    private volatile Context appContext;
 
     private ApexCore() {
     }
@@ -65,10 +70,22 @@ public final class ApexCore {
                 return;
             }
             ApexLog.configure(config.getLogger(), config.getLogLevel());
+            this.appContext = appContext;
             initialized = true;
         }
         ApexLog.i("initialized, version=" + BuildConfig.SDK_VERSION + ", host=" + appContext.getPackageName()
                 + ", service connected=" + isServiceConnected());
+        try {
+            DevBridge.maybeStart(appContext, config);
+        } catch (Throwable t) {
+            // 调试桥只是开发辅助，任何问题都不能影响宿主
+            ApexLog.w("devtools bridge not started: " + t);
+        }
+    }
+
+    /** {@link #init} 时传入的 application context，未初始化时为 null。 */
+    Context appContext() {
+        return appContext;
     }
 
     public boolean isInitialized() {
@@ -105,13 +122,55 @@ public final class ApexCore {
         return service;
     }
 
+    /** 新建一个基于当前服务的屏幕源，只能在引擎线程上使用。 */
+    AccessibilityScreenSource newScreenSource() {
+        return new AccessibilityScreenSource(this::service, activityTracker);
+    }
+
+    AndroidActionExecutor newExecutor(AccessibilityScreenSource source) {
+        return new AndroidActionExecutor(source, this::service);
+    }
+
+    /** 新的取消开关，等待基于全局事件信号。 */
+    RunController newController() {
+        return new RunController(signal);
+    }
+
+    /** 在引擎线程上执行，供调试桥使用。 */
+    <T> Future<T> submit(Callable<T> task) {
+        return engineThread().submit(task);
+    }
+
     // ---- 运行 ----
 
     public boolean isRunning() {
         return current.get() != null;
     }
 
+    /** 正在运行的流程 id，没有时为 null。 */
+    String runningFlowId() {
+        Run run = current.get();
+        return run != null ? run.flowId : null;
+    }
+
+    /** 取消正在运行的流程；没有流程在运行时返回 false。 */
+    boolean cancelCurrent() {
+        Run run = current.get();
+        if (run == null) {
+            return false;
+        }
+        run.cancel();
+        return true;
+    }
+
     public RunHandle run(Flow flow, FlowListener listener) {
+        return run(flow, listener, null);
+    }
+
+    /**
+     * @param traceSink 每条轨迹事件产生时在引擎线程上回调，可以为 null
+     */
+    RunHandle run(Flow flow, FlowListener listener, Consumer<TraceEvent> traceSink) {
         String flowId = flow != null ? flow.getId() : null;
         if (flow == null) {
             return finishImmediately(listener, RunResult.notStarted(RunResult.Status.INVALID_ARGUMENT, null,
@@ -135,10 +194,13 @@ public final class ApexCore {
         engineThread().execute(() -> {
             RunResult result;
             try {
-                AccessibilityScreenSource source = new AccessibilityScreenSource(this::service, activityTracker);
-                AndroidActionExecutor executor = new AndroidActionExecutor(source, this::service);
-                result = new FlowEngine(runId, flow, Registry.get().globalInterceptors(), source, executor,
-                        Clock.SYSTEM, run.controller, mainListener, EngineConfig.DEFAULT).run();
+                AccessibilityScreenSource source = newScreenSource();
+                FlowEngine engine = new FlowEngine(runId, flow, Registry.get().globalInterceptors(), source,
+                        newExecutor(source), Clock.SYSTEM, run.controller, mainListener, EngineConfig.DEFAULT);
+                if (traceSink != null) {
+                    engine.setTraceSink(traceSink);
+                }
+                result = engine.run();
             } catch (Throwable t) {
                 ApexLog.e("[" + runId + "] run crashed", t);
                 result = RunResult.notStarted(RunResult.Status.ERROR, flowId, "internal error: " + t);
@@ -164,7 +226,7 @@ public final class ApexCore {
             return;
         }
         engineThread().execute(() -> {
-            ScreenSnapshot snapshot = new AccessibilityScreenSource(this::service, activityTracker).snapshot();
+            ScreenSnapshot snapshot = newScreenSource().snapshot();
             String text = snapshot != null ? ScreenDumper.dump(snapshot) : "unavailable: snapshot failed";
             ApexLog.i(text);
             postMain(() -> callback.onDump(snapshot, text));

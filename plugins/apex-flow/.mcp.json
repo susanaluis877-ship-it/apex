@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "apex": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/apex-flow/scripts/apex.py", "mcp"],
+      "env": {
+        "ANDROID_SERIAL": "${ANDROID_SERIAL:-}",
+        "APEX_PACKAGE": "${APEX_PACKAGE:-}",
+        "ANDROID_HOME": "${ANDROID_HOME:-}"
+      }
+    }
+  }
+}

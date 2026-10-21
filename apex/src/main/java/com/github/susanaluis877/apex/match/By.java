@@ -59,4 +59,28 @@ public final class By {
     public static Selector scrollable(boolean value) {
         return new Selector().scrollable(value);
     }
+
+    public static Selector stateDesc(String value) {
+        return new Selector().stateDesc(value);
+    }
+
+    public static Selector stateDescContains(String value) {
+        return new Selector().stateDescContains(value);
+    }
+
+    public static Selector progressAtLeast(double ratio) {
+        return new Selector().progressAtLeast(ratio);
+    }
+
+    public static Selector progressAtMost(double ratio) {
+        return new Selector().progressAtMost(ratio);
+    }
+
+    public static Selector hasDescendant(Selector... selectors) {
+        return new Selector().hasDescendant(selectors);
+    }
+
+    public static Selector inside(Selector selector) {
+        return new Selector().inside(selector);
+    }
 }

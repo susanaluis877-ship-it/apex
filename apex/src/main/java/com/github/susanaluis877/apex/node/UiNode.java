@@ -21,14 +21,20 @@ public final class UiNode {
     private static final int EDITABLE = 1 << 7;
     private static final int FOCUSED = 1 << 8;
     private static final int VISIBLE = 1 << 9;
+    private static final int CAN_SCROLL_FORWARD = 1 << 10;
+    private static final int CAN_SCROLL_BACKWARD = 1 << 11;
+    private static final int CAN_SET_PROGRESS = 1 << 12;
 
     private final int handle;
     private final String className;
     private final String text;
     private final String desc;
+    private final String hint;
+    private final String stateDescription;
     private final String viewId;
     private final String packageName;
     private final Bounds bounds;
+    private final Range range;
     private final int flags;
     private final List<UiNode> children;
     private UiNode parent;
@@ -38,9 +44,12 @@ public final class UiNode {
         this.className = b.className;
         this.text = b.text;
         this.desc = b.desc;
+        this.hint = b.hint;
+        this.stateDescription = b.stateDescription;
         this.viewId = b.viewId;
         this.packageName = b.packageName;
         this.bounds = b.bounds;
+        this.range = b.range;
         this.flags = b.flags;
         this.children = children;
     }
@@ -75,6 +84,16 @@ public final class UiNode {
         return desc;
     }
 
+    /** 输入框的提示文字（API 26+），没有时为 null。 */
+    public String getHint() {
+        return hint;
+    }
+
+    /** 控件状态的文字描述（API 30+），例如开关的「已开启」；没有时为 null。 */
+    public String getStateDescription() {
+        return stateDescription;
+    }
+
     /**
      * 完整资源 id，例如 {@code com.foo:id/submit}；没有 id 时为 null。
      */
@@ -88,6 +107,11 @@ public final class UiNode {
 
     public Bounds getBounds() {
         return bounds;
+    }
+
+    /** 滑块、进度条的取值范围；其他节点为 null。 */
+    public Range getRange() {
+        return range;
     }
 
     public boolean isClickable() {
@@ -133,6 +157,21 @@ public final class UiNode {
         return (flags & VISIBLE) != 0;
     }
 
+    /** 支持向前滚动（通常是向下或向右），即后面还有内容。 */
+    public boolean canScrollForward() {
+        return (flags & CAN_SCROLL_FORWARD) != 0;
+    }
+
+    /** 支持向后滚动（通常是向上或向左），即前面还有内容。 */
+    public boolean canScrollBackward() {
+        return (flags & CAN_SCROLL_BACKWARD) != 0;
+    }
+
+    /** 支持直接设置进度（{@code ACTION_SET_PROGRESS}）。 */
+    public boolean canSetProgress() {
+        return (flags & CAN_SET_PROGRESS) != 0;
+    }
+
     public UiNode getParent() {
         return parent;
     }
@@ -163,9 +202,12 @@ public final class UiNode {
         private String className;
         private String text;
         private String desc;
+        private String hint;
+        private String stateDescription;
         private String viewId;
         private String packageName;
         private Bounds bounds = Bounds.EMPTY;
+        private Range range;
         private int flags = ENABLED | VISIBLE;
         private final List<Builder> children = new ArrayList<>();
 
@@ -186,6 +228,21 @@ public final class UiNode {
 
         public Builder desc(String desc) {
             this.desc = desc;
+            return this;
+        }
+
+        public Builder hint(String hint) {
+            this.hint = hint;
+            return this;
+        }
+
+        public Builder stateDescription(String stateDescription) {
+            this.stateDescription = stateDescription;
+            return this;
+        }
+
+        public Builder range(Range range) {
+            this.range = range;
             return this;
         }
 
@@ -246,6 +303,18 @@ public final class UiNode {
 
         public Builder visible(boolean value) {
             return flag(VISIBLE, value);
+        }
+
+        public Builder canScrollForward(boolean value) {
+            return flag(CAN_SCROLL_FORWARD, value);
+        }
+
+        public Builder canScrollBackward(boolean value) {
+            return flag(CAN_SCROLL_BACKWARD, value);
+        }
+
+        public Builder canSetProgress(boolean value) {
+            return flag(CAN_SET_PROGRESS, value);
         }
 
         public Builder child(Builder child) {

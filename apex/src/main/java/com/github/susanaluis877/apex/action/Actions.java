@@ -16,6 +16,8 @@ public final class Actions {
     public static final long DEFAULT_LONG_PRESS_MS = 800;
     /** 滑动的默认时长。 */
     public static final long DEFAULT_SWIPE_MS = 300;
+    /** {@link #scrollTo} 默认最多滚动的次数。 */
+    public static final int DEFAULT_SCROLL_TO_MAX_SWIPES = 10;
 
     private Actions() {
     }
@@ -73,6 +75,32 @@ public final class Actions {
 
     public static Action setText(Selector target, String text) {
         return new Action.SetText(target, text, false, 0);
+    }
+
+    /**
+     * 把滑块或进度条设成绝对值 {@code value}（超出范围时取边界）。目标本身不是滑块时，用它里面的第一个滑块。
+     * 节点不支持直接设值时，按比例位置点击。
+     */
+    public static Action setProgress(Selector target, double value) {
+        return new Action.SetProgress(target, value, null, false, 0);
+    }
+
+    /** 把滑块或进度条设到范围内的比例位置，{@code ratio} 取 0~1，例如 1 表示最大。 */
+    public static Action setProgressRatio(Selector target, double ratio) {
+        return new Action.SetProgress(target, null, ratio, false, 0);
+    }
+
+    /** 向前滚动屏幕上第一个可滚动容器，直到 {@code target} 出现，最多 {@link #DEFAULT_SCROLL_TO_MAX_SWIPES} 次。 */
+    public static Action scrollTo(Selector target) {
+        return scrollTo(target, null, Action.Direction.FORWARD, DEFAULT_SCROLL_TO_MAX_SWIPES);
+    }
+
+    /**
+     * 滚动 {@code container}（为 null 时用第一个可滚动容器）直到 {@code target} 出现。
+     * 拨动滚轮选择器时，容器和目标通常是同一个节点，目标里写上想要的值，例如 {@code By.textMatches("7小时.*")}。
+     */
+    public static Action scrollTo(Selector target, Selector container, Action.Direction direction, int maxSwipes) {
+        return new Action.ScrollTo(target, container, direction, maxSwipes, false, 0);
     }
 
     public static Action back() {

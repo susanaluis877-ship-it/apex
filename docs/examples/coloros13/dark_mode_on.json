@@ -1,0 +1,67 @@
+{
+  "id": "settings.dark_mode_on",
+  "start": "launch",
+  "timeoutMs": 90000,
+  "maxSteps": 20,
+  "defaults": {"timeoutMs": 10000, "retryIntervalMs": 3000, "maxRetries": 2, "actionGapMs": 300},
+  "states": [
+    {
+      "id": "launch",
+      "match": {"always": true},
+      "actions": [{"type": "launchApp", "package": "com.android.settings"}],
+      "next": ["already_dark", "light", "display_scrolled", "home", "sub_page"]
+    },
+    {
+      "id": "home",
+      "match": {
+        "package": "com.android.settings",
+        "has": {"text": "设置"},
+        "not": {"has": {"id": "coui_toolbar_back_view"}}
+      },
+      "actions": [
+        {"type": "scrollTo", "target": {"text": "显示与亮度"}, "direction": "forward", "maxSwipes": 3, "optional": true},
+        {"type": "scrollTo", "target": {"text": "显示与亮度"}, "direction": "backward", "maxSwipes": 8},
+        {"type": "click", "target": {"text": "显示与亮度"}}
+      ],
+      "next": ["already_dark", "light", "display_scrolled"]
+    },
+    {
+      "id": "sub_page",
+      "match": {
+        "package": "com.android.settings",
+        "has": {"id": "coui_toolbar_back_view"},
+        "not": {"has": {"text": "显示与亮度"}}
+      },
+      "actions": [{"type": "back"}],
+      "retryIntervalMs": 2000,
+      "maxRetries": 4,
+      "next": ["already_dark", "light", "display_scrolled", "home"]
+    },
+    {
+      "id": "display_scrolled",
+      "match": {
+        "package": "com.android.settings",
+        "has": [{"text": "显示与亮度"}, {"id": "coui_toolbar_back_view"}],
+        "not": {"has": {"id": "rb_dark_button"}}
+      },
+      "actions": [{"type": "scrollTo", "target": {"id": "rb_dark_button"}, "direction": "backward", "maxSwipes": 5}],
+      "next": ["already_dark", "light"]
+    },
+    {
+      "id": "already_dark",
+      "match": {"package": "com.android.settings", "has": {"id": "rb_dark_button", "checked": true}},
+      "end": "success"
+    },
+    {
+      "id": "light",
+      "match": {"package": "com.android.settings", "has": {"id": "rb_dark_button", "checked": false}},
+      "actions": [{"type": "click", "target": {"id": "layout_dark_theme"}}],
+      "next": ["dark_done"]
+    },
+    {
+      "id": "dark_done",
+      "match": {"package": "com.android.settings", "has": {"id": "rb_dark_button", "checked": true}},
+      "end": "success"
+    }
+  ]
+}

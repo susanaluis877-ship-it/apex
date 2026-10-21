@@ -15,6 +15,8 @@ public class ApexConfigTest {
         assertFalse(config.isDebug());
         assertSame(ApexLogger.LOGCAT, config.getLogger());
         assertEquals(ApexLogger.WARN, config.getLogLevel());
+        assertTrue("调试桥默认允许，实际只在 debuggable 包里启动", config.isDevtools());
+        assertFalse(new ApexConfig.Builder().setDevtools(false).build().isDevtools());
     }
 
     @Test

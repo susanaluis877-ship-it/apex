@@ -19,7 +19,8 @@ import java.util.List;
 public class PurityTest {
 
     private static final String ROOT = "src/main/java/com/github/susanaluis877/apex/";
-    private static final String[] PURE_PACKAGES = {"flow", "node", "match", "action", "internal/engine"};
+    private static final String[] PURE_PACKAGES = {"flow", "node", "match", "action", "internal/engine",
+            "internal/devtools"};
 
     @Test
     public void purePackagesDoNotImportAndroid() throws IOException {

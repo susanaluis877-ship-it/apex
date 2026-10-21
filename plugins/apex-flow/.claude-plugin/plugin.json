@@ -1,0 +1,17 @@
+{
+  "name": "apex-flow",
+  "version": "0.4.0",
+  "description": "让 AI 在真机上自己探索 App、编写并验证 Apex 流程：通过宿主 App 里的 Apex 调试桥看页面（节点树 + 带编号框的截图）、做动作、记录探索过程，再校验、检查和运行流程。",
+  "author": {
+    "name": "susanaluis877"
+  },
+  "homepage": "https://github.com/susanaluis877-ship-it/apex",
+  "repository": "https://github.com/susanaluis877-ship-it/apex",
+  "license": "MIT",
+  "keywords": [
+    "android",
+    "accessibility",
+    "automation",
+    "apex"
+  ]
+}
