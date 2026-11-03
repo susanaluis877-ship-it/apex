@@ -109,7 +109,7 @@ public final class ShopFlows {
 - **在状态之间传值**（例如先在一个 App 里读出数据，再到另一个 App 里输入）：在流程方法里建一个 `AtomicReference`，前面状态的 `run(...)` 写入，后面的条件和动作读取。这要求每次运行都重新调用流程方法构建 `Flow`（宿主列表用 `Supplier<Flow>` / 方法引用登记就是这样），同一个 `Flow` 对象跑两次会带着上次的值。
 - **SDK 和宿主的 minSdk 是 24**：没开 core library desugaring 时不能用 `java.time`，日期计算用 `java.util.Calendar`。
 - **没有 `textStartsWith`**：用 `textMatches("ApexLab 天气 .*")`（整段匹配，多行文字加 `(?s)`）。
-- 有的 App 的文字里带看不见的方向控制符（例如温度里的 U+200E），按文字比对前先去掉 `[\u200e\u200f\u2066-\u2069]`。
+- 有的 App 的文字里带看不见的方向控制符（例如温度里的 U+200E），按文字比对或解析前先去掉，例如 `text.replaceAll("[\\u200e\\u200f\\u2066-\\u2069]", "")`；选择器的写法见 selectors.md。
 
 ## 什么时候用内联代码
 

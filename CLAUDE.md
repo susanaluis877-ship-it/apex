@@ -23,6 +23,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
 ## 硬约束
 
 - **依赖。** 纯 Java，没有三方运行时依赖。测试依赖可以加（junit、org.json）。
+- **职责划分。** SDK 只提供基本能力（匹配、动作、引擎、调试桥）。个别 App 的怪癖（例如文字里看不见的方向控制符）和“怎么组合使用”写进 skill 的 references，由开发者或 AI 处理，不在 SDK 里做特殊处理。
 - **构建配置。**
   - `enableKotlin = false`，否则 AGP 9 会往 POM 里加 kotlin-stdlib。
   - 资源名必须带 `apex_` 前缀。

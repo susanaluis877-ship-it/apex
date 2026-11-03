@@ -20,7 +20,7 @@
 | 结果 | 常见原因 | 怎么查 |
 |---|---|---|
 | `SUCCESS` / `FAILURE` | 走到了 success / failure 终止状态 | FAILURE 是你设计的失败分支，确认它确实该失败 |
-| `TIMEOUT` | 下一状态一直没出现 | 看最后几条 `WAIT`：哪个候选差了什么条件（`match all but ...`、`no node matches (...)`）。对照 `SCREEN_DUMP` 看页面上实际是什么。常见：文字不完全一样（空格、全角、换行）、节点不可见要 `visible:false`、页面停在了没列进 `next` 的地方、弹窗挡住没拦截器 |
+| `TIMEOUT` | 下一状态一直没出现 | 看最后几条 `WAIT`：哪个候选差了什么条件（`match all but ...`、`no node matches (...)`）。对照 `SCREEN_DUMP` 看页面上实际是什么。常见：文字不完全一样（空格、全角、换行；打出来一模一样却不匹配时，多半是看不见的方向控制符，见 selectors.md）、节点不可见要 `visible:false`、页面停在了没列进 `next` 的地方、弹窗挡住没拦截器 |
 | `ACTION_FAILED` | 动作硬失败：目标不可输入、不是滑块、启动不了 App | 看 `ACTION` 行的原因；launchApp 失败多半是宿主没声明 `<queries>` |
 | `MAX_STEPS` | 状态之间来回跳 | 看路径和 `LOOP` 提示：两个状态条件都匹配同一个页面，或者动作没有让页面前进 |
 | `ERROR` | 自定义条件/动作抛异常，或者内部错误 | 看消息 |
