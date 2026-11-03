@@ -281,6 +281,159 @@ class ToolHelpersTest(unittest.TestCase):
             kit.resolve_action("jump @1")
 
 
+class RegressionFixesTest(unittest.TestCase):
+    """apex-lab 第二轮回归发现的工具问题：部署后的旧编号、空页面、等运行结束、launch 和流程一致、check 的重复提示。"""
+
+    class Bridge:
+        def __init__(self, responses):
+            self.responses = responses
+            self.requests = []
+
+        def request(self, payload, timeout=None):
+            self.requests.append(payload)
+            r = self.responses[payload["cmd"]]
+            r = r.pop(0) if isinstance(r, list) else r
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        def resolve_package(self):
+            return "com.example.host"
+
+    class Adb:
+        def __init__(self):
+            self.commands = []
+
+        def shell(self, cmd):
+            self.commands.append(cmd)
+            return "com.foo/.MainActivity\n" if "resolve-activity" in cmd else ""
+
+        def resolve(self):
+            return "SERIAL"
+
+    class Clock:
+        """假时钟：sleep 只推进时间，测试不真的等。"""
+
+        def __init__(self):
+            self.now = 1000.0
+
+        def time(self):
+            return self.now
+
+        def sleep(self, s):
+            self.now += s
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["APEX_HOME"] = self.tmp.name
+        os.environ["XDG_CACHE_HOME"] = self.tmp.name
+        Session.start("回归")
+
+    def tearDown(self):
+        del os.environ["APEX_HOME"]
+        del os.environ["XDG_CACHE_HOME"]
+        self.tmp.cleanup()
+
+    def kit(self, responses):
+        kit = Toolkit.__new__(Toolkit)
+        kit.bridge = self.Bridge(responses)
+        kit.adb = self.Adb()
+        kit._adb_mode_reason = lambda: None
+        return kit
+
+    def test_redeploy_invalidates_old_refs(self):
+        from apexlib.tools import STALE_REFS
+        kit = self.kit({})
+        kit._save_last(settings_page())
+        self.assertEqual(12, kit.last_screen().seq)
+        self.assertTrue(kit._forget_last())
+        with self.assertRaises(ApexError) as e:
+            kit.last_screen()
+        self.assertIn("先 observe", e.exception.message)
+        self.assertFalse(kit._forget_last(), "没有缓存时什么都不做")
+
+        def stale(*_):
+            raise ApexError("STALE_SNAPSHOT", "no snapshot yet; take one first")
+        with self.assertRaises(ApexError) as e:
+            Toolkit._fresh_refs(stale)
+        self.assertEqual(STALE_REFS, e.exception.message)
+
+    def test_empty_page_is_explained_instead_of_package_none(self):
+        from apexlib.tools import HIDDEN_PAGE
+        session = Session.current()
+        before = Screen(settings_page())
+        empty = Screen({"format": 1, "seq": 9, "w": 1080, "h": 2412, "partial": False, "windows": []})
+        page, new = session.identify(empty)
+        warnings = Toolkit._warnings(session, before, empty, page, new, {"status": "OK", "changed": True},
+                                     {"type": "click"}, [])
+        self.assertIn(HIDDEN_PAGE, warnings)
+        self.assertFalse([w for w in warnings if "None" in w], warnings)
+
+    def test_status_can_wait_for_a_host_started_run(self):
+        from unittest import mock
+        running = {"device": {"running": "weather.to_note"}}
+        idle = {"device": {"running": None}}
+        done = {"ok": True, "run": {"flowId": "weather.to_note", "running": False, "step": 9, "elapsedMs": 15100,
+                                    "trace": [], "result": {"status": "SUCCESS", "path": ["a", "b"],
+                                                            "durationMs": 15100}}}
+        clock = self.Clock()
+        with mock.patch("apexlib.tools.time", clock):
+            kit = self.kit({"info": [running, running, running, idle], "status": done})
+            out = kit.status(wait_s=60)
+            self.assertIn("最近一次: weather.to_note  结果 SUCCESS", out.text)
+            self.assertAlmostEqual(1.5, clock.now - 1000.0)
+
+            kit = self.kit({"info": running, "status": RunStatusTest.RUNNING})
+            out = kit.status(wait_s=500)
+            self.assertIn("等了 120s 还没结束", out.text, "最多等 MAX_WAIT_S")
+
+    def test_launch_matches_launch_app_and_falls_back_to_adb(self):
+        from unittest import mock
+        with mock.patch("apexlib.tools.time", self.Clock()):
+            self._launch_cases()
+
+    def _launch_cases(self):
+        idle = {"device": {"running": None}}
+        kit = self.kit({"info": idle, "act": {"status": "OK", "changed": True}})
+        kit.observe = lambda **kw: Output("页面")
+        out = kit.launch("com.foo")
+        self.assertEqual({"type": "launchApp", "package": "com.foo"}, kit.bridge.requests[-1]["action"])
+        self.assertFalse([c for c in kit.adb.commands if c.startswith("am start")])
+        self.assertIn("用 launchApp 打开 com.foo", out.text)
+
+        kit = self.kit({"info": idle, "act": {"status": "HARD_FAIL", "message": "no launch intent for com.foo "
+                                                                              "(the host manifest lacks <queries>)"}})
+        kit.observe = lambda **kw: Output("页面")
+        out = kit.launch("com.foo")
+        self.assertIn("am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "
+                      "-n com.foo/.MainActivity -f 0x10200000", kit.adb.commands)
+        self.assertIn("<queries>", out.text)
+
+        kit = self.kit({"info": idle})
+        kit.observe = lambda **kw: Output("页面")
+        kit.launch("com.foo", reset=True)
+        self.assertFalse([r for r in kit.bridge.requests if r["cmd"] == "act"], "reset 不走 launchApp")
+        self.assertTrue([c for c in kit.adb.commands if c.endswith("-f 0x10008000")])
+
+    def test_check_merges_hints_repeated_for_every_state(self):
+        from apexlib.tools import render_check
+        rest = "sample 'P3' matches [a, b]; 'a' wins because it comes first in next [a, b]"
+        warnings = [{"kind": "ambiguous", "message": "after 's%d', %s" % (i, rest)} for i in range(7)]
+        warnings.append({"kind": "too-broad", "message": "state 'x' matches every sample"})
+        text = render_check({"samples": [], "states": [], "interceptors": [], "warnings": warnings})
+        self.assertEqual(1, text.count(rest))
+        self.assertIn("after 's0', 's1', 's2', 's3', 's4' 等 7 个状态, " + rest, text)
+        self.assertIn("state 'x' matches every sample", text)
+
+        resp = {"samples": [{"name": "month_wrong_month#P4.3"}, {"name": "P9"}],
+                "states": [{"id": "month_wrong_month", "matches": ["month_wrong_month#P4.3"]}],
+                "interceptors": [], "warnings": []}
+        lines = render_check(resp).splitlines()
+        self.assertEqual("样本对应的状态：P4.3→month_wrong_month", lines[0])
+        self.assertEqual(["P4.3", "P9"], lines[1].split(), "列名只写样本编号，不被长的状态名撑宽")
+        self.assertEqual(["状态", "month_wrong_month", "✓", "·"], lines[2].split())
+
+
 class RunStatusTest(unittest.TestCase):
     """宿主界面里发起的运行：status 能看到，运行期间 observe / act 不干等；截图前后隐藏悬浮窗。"""
 

@@ -457,4 +457,6 @@ apex-lab 升到 0.6.0（插件同为 0.6.0），还原成没有任何 AI 流程�
 - **宿主主页的「运行」按钮没有 id 和描述**（apex-lab 自己的问题），工具只能按坐标点。
 - 滚轮仍是每格约 0.5 秒，B 新建一次约 45 秒，其中约 30 秒在拨分钟。
 
+**插件这边的处理**（只改 skill 和 `apex.py`，不动 SDK）：API 速查补上 `Bounds`、`ScreenMatcher`，`swipe` 写明坐标是数组；`inside` 的例子改成用行的 id 限定，并说明只写 `hasDescendant` 会命中整列；排错文档加了空快照、被盖住的节点、收起的面板里的不可见行、输入法挡住表单、`STALE_SNAPSHOT`；`observe` / `act` 解释空快照；`deploy` / `setup` 后清掉旧编号；`status` / `observe` 能等宿主发起的运行结束；`launch` 走和流程一样的 `launchApp`；`check` 合并重复提示、缩短矩阵列名（B 的一次 `check` 从 39 KB 降到 9.5 KB）。都在 PJV110 上验证过。插件版本升到 0.6.2（SDK 仍是 0.6.1，没发版）。
+
 **手机上留下的**（PJV110）：Apex Lab 和开启的服务；便签里一条「ApexLab 天气 …」和回收站里几条；日历里 11/4 的「ApexLab 周会」；天气、便签、日历的首次隐私协议和天气的定位权限（使用时允许）。AI 临时打开过 Wi‑Fi，已关回去。测试前卸载了 demo（它的状态悬浮窗会挡住坐标点击）。ColorOS 14 卸载后几秒内会把服务名从 `enabled_accessibility_services` 里清掉，和 ColorOS 13 不同。

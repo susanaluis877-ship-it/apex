@@ -15,6 +15,13 @@ from .session import Session
 
 PERMISSION_PACKAGES = ("com.android.permissioncontroller", "com.google.android.permissioncontroller",
                        "com.lbe.security.miui", "com.oplus.securitypermission")
+# status / observe 等流程结束最多等这么久，避免一次工具调用卡太久
+MAX_WAIT_S = 120
+HIDDEN_PAGE = ("抓到的页面是空的（一个窗口都没有）。最常见的原因是当前窗口对无障碍服务隐藏了：Android 14 起，对无障碍数据敏感的界面"
+               "（例如系统权限弹窗）只对声明为辅助功能工具的服务可见。Apex SDK 0.6.1 起默认声明；宿主的 SDK 更旧、或者用同名资源"
+               "关掉了这个声明时就会这样。用 screenshot=plain 看看是什么；如果确实是这类界面，这一步要由人在手机上处理，"
+               "流程里不能依赖它。只是页面还没加载出来的话，等一会儿再 observe")
+STALE_REFS = ("这个 @编号来自旧的页面：宿主重启过（deploy / setup 之后），或者之后又抓过新页面。先 observe，再用新的 @编号")
 
 
 class Output:
@@ -277,6 +284,8 @@ class Toolkit:
                                                     "服务已连接 " + detail if ready else "✗ " + detail)]
         if not ready:
             lines.append("调试桥或服务没有就绪。首次安装或服务没开启时运行 setup。")
+        if self._forget_last():
+            lines.append("宿主进程重启了，之前的 @编号已经失效，先 observe")
         return Output("\n".join(lines), ok=ready)
 
     def setup(self, module=None, apk=None, project=None, package=None, timeout=90):
@@ -299,6 +308,8 @@ class Toolkit:
             lines.append(step)
         ready, detail = provision.wait_ready(self, package, None, timeout)
         lines.append("✓ Apex 已就绪（%s）" % detail if ready else "✗ 还没就绪：%s" % detail)
+        if (module or apk) and self._forget_last():
+            lines.append("宿主重新安装了，之前的 @编号已经失效，先 observe")
         return Output("\n".join(lines), ok=ready)
 
     # ---------------------------------------------------------------- 快照缓存
@@ -314,12 +325,30 @@ class Toolkit:
         with open(self._cache_file(), "w", encoding="utf-8") as f:
             json.dump(snapshot, f, ensure_ascii=False)
 
+    def _forget_last(self):
+        """宿主进程重启后设备上的快照没了，电脑上缓存的旧页面和它的 @编号也作废。返回有没有删掉缓存。"""
+        try:
+            os.remove(self._cache_file())
+            return True
+        except OSError:
+            return False
+
     def last_screen(self):
         try:
             with open(self._cache_file(), encoding="utf-8") as f:
                 return Screen(json.load(f))
         except (OSError, ValueError):
-            raise ApexError("NO_SNAPSHOT", "no snapshot yet; observe the screen first")
+            raise ApexError("NO_SNAPSHOT", "还没有可用的页面（或者宿主刚重新部署过，之前的 @编号已失效）；先 observe")
+
+    @staticmethod
+    def _fresh_refs(fn, *args):
+        """按 @编号去设备上验证时，设备说快照不是它保留的那份：换成能看懂的说明。"""
+        try:
+            return fn(*args)
+        except ApexError as e:
+            if e.code == "STALE_SNAPSHOT":
+                raise ApexError("STALE_SNAPSHOT", STALE_REFS)
+            raise
 
     def _wait_idle(self, timeout=60):
         """有流程在运行（例如刚在 runner 里点了运行）时等它结束。返回说明，没在运行时返回 None。"""
@@ -356,7 +385,7 @@ class Toolkit:
     def _running_output(self, running, screenshot):
         """有流程在跑时引擎线程被占着，拿不到页面结构：给出它的进度（和原图截图），而不是干等。"""
         text = ("⚠ 流程 %s 正在运行（例如在宿主界面里点了「运行」），这时拿不到页面结构。下面是它的进度；"
-                "等它结束再 observe，或者 raw {\"cmd\": \"cancel\"} 取消。\n" % running)
+                "用 status 加 wait_s 等它结束，或者 raw {\"cmd\": \"cancel\"} 取消。\n" % running)
         try:
             text += self.status(limit=15).text
         except ApexError as e:
@@ -366,8 +395,22 @@ class Toolkit:
             self._attach_shot(out, None, "plain", Session.current(), "running-%s" % time.strftime("%H%M%S"))
         return out
 
-    def status(self, limit=40):
-        """当前或最近一次运行的状态、结果和最近的轨迹，包括在宿主 App 界面里点「运行」发起的运行。"""
+    def _wait_run_end(self, seconds):
+        """有流程在运行时等它结束，最多 seconds 秒（上限 MAX_WAIT_S）。返回 (是否已结束, 等了多久)。"""
+        start = time.time()
+        end = start + min(max(seconds, 0), MAX_WAIT_S)
+        while self._running():
+            if time.time() >= end:
+                return False, time.time() - start
+            time.sleep(0.5)
+        return True, time.time() - start
+
+    def status(self, limit=40, wait_s=0):
+        """当前或最近一次运行的状态、结果和最近的轨迹，包括在宿主 App 界面里点「运行」发起的运行。
+        wait_s 大于 0 时，有流程在跑就先等它结束（最多 MAX_WAIT_S 秒）再返回。"""
+        waited = None
+        if wait_s:
+            waited = self._wait_run_end(wait_s)
         try:
             resp = self.bridge.request({"cmd": "status", "limit": limit})
         except ApexError as e:
@@ -381,6 +424,8 @@ class Toolkit:
         if run["running"]:
             lines = ["运行中: %s  状态 %s（第 %d 步）  已用 %.1fs" % (
                 run["flowId"], run.get("state") or "-", run["step"], run["elapsedMs"] / 1000.0)]
+            if waited is not None:
+                lines.append("（等了 %.0fs 还没结束；可以再用 wait_s 等，或者 raw {\"cmd\": \"cancel\"} 取消）" % waited[1])
         else:
             lines = ["最近一次: %s  结果 %s  路径: %s  耗时 %.1fs" % (
                 run["flowId"], result["status"], " → ".join(result["path"]) or "-", result["durationMs"] / 1000.0)]
@@ -405,6 +450,12 @@ class Toolkit:
         if why:
             return self._adb_observe(why, screenshot)
         running = self._running()
+        if running and wait_ms:
+            # 宿主界面里点了「运行」之后，用 wait_ms 等它结束再看页面
+            ended, waited = self._wait_run_end(wait_ms / 1000.0)
+            if ended:
+                running = None
+                wait_ms = max(0, wait_ms - int(waited * 1000))
         if running:
             return self._running_output(running, screenshot)
         screen = self._take(wait_ms)
@@ -418,6 +469,8 @@ class Toolkit:
             lines.append(self._busy_note)
         lines.append("页面 %s%s   路径: %s" % (Session.page_name(page), "（首次到达）" if new else "（第 %d 次）"
                                              % page["visits"], session.path_of_pages()))
+        if not screen.nodes:
+            lines.append("⚠ " + HIDDEN_PAGE)
         dim = self._screen_warning()
         if dim:
             lines.append("⚠ " + dim)
@@ -586,7 +639,9 @@ class Toolkit:
             warnings.append("执行后页面没有任何变化：可能点到了不响应的元素、目标被遮挡，或者页面还在加载（可以 observe 加 wait_ms 再看）")
         if checks and not all(ok for _, ok in checks):
             warnings.append("预期没有达成。先判断现在在哪、离目标是更近还是更远了，再决定是继续、后退还是换一条路")
-        if before is not None and before.pkg != after.pkg and action.get("type") != "launchApp":
+        if not after.nodes:
+            warnings.append(HIDDEN_PAGE)
+        elif before is not None and before.pkg != after.pkg and action.get("type") != "launchApp":
             # 只认弹窗形态的：ColorOS 设置里的「权限管理」也属于 securitypermission，但它是铺满全屏的普通页面
             if after.pkg in PERMISSION_PACKAGES and _top_is_dialog(after):
                 warnings.append("弹出了系统权限对话框（%s）。决定允许还是拒绝；流程里通常用拦截器处理它" % after.pkg)
@@ -657,7 +712,7 @@ class Toolkit:
         screen = self.last_screen()
         n = screen.node(ref)
         purpose = "click" if verb in ("click", "longClick") else "exact"
-        ranked = suggest(self.bridge, screen, n, purpose)
+        ranked = self._fresh_refs(suggest, self.bridge, screen, n, purpose)
         best = best_selector(ranked)
         if best is None:
             if verb in ("click", "longClick"):
@@ -674,7 +729,7 @@ class Toolkit:
     def suggest(self, ref, purpose="click"):
         screen = self.last_screen()
         n = screen.node(ref)
-        ranked = suggest(self.bridge, screen, n, purpose)
+        ranked = self._fresh_refs(suggest, self.bridge, screen, n, purpose)
         lines = ["@%d %s" % (n.h, describe_node(n))]
         if not ranked:
             lines.append("没有可用的候选（节点没有文本、描述和 id）；考虑用父节点的特征、自定义条件或按比例坐标")
@@ -689,7 +744,7 @@ class Toolkit:
     def find(self, selectors):
         screen = self.last_screen()
         selectors = [s if isinstance(s, dict) else _json(s) for s in selectors]
-        resp = self.bridge.request({"cmd": "find", "seq": screen.seq, "selectors": selectors})
+        resp = self._fresh_refs(self.bridge.request, {"cmd": "find", "seq": screen.seq, "selectors": selectors})
         lines = []
         for sel, r in zip(selectors, resp["results"]):
             lines.append("%s → %d 个%s" % (json.dumps(sel, ensure_ascii=False), r["count"],
@@ -714,17 +769,39 @@ class Toolkit:
         return self.act(action, intent="寻找「%s」" % text, expect={"text": text}, screenshot=screenshot)
 
     def launch(self, package, reset=False, screenshot="none"):
-        component = self._launcher(package)
-        # NEW_TASK|CLEAR_TASK 回到首页而不杀进程；绝不用强制停止：对宿主包会让无障碍服务被系统关掉
-        flags = "0x10008000" if reset else "0x10200000"
-        self.adb.shell("am start -n %s -f %s" % (component, flags))
+        """打开 App。Apex 可用且不是 reset 时，走和流程里一样的 launchApp，落点才和流程运行时一致；
+        launchApp 打不开（宿主没声明 <queries>）时改用 adb，并提醒流程里也会失败。"""
+        how, warning = None, None
+        if not reset and not self._adb_mode_reason():
+            running = self._running()
+            if running:
+                raise ApexError("BUSY", "流程 %s 正在运行，这时不能打开别的 App。用 status 看它的进度，等它结束，"
+                                        "或者 raw {\"cmd\": \"cancel\"} 取消" % running)
+            try:
+                resp = self.bridge.request({"cmd": "act", "action": {"type": "launchApp", "package": package}})
+                failed = None if resp["status"] == "OK" else resp.get("message") or resp["status"]
+            except ApexError as e:
+                failed = str(e)
+            if failed is None:
+                how = "用 launchApp 打开 %s（和流程运行时一样）" % package
+            else:
+                warning = ("流程里的 launchApp 打不开它（%s）。已改用 adb 打开；流程运行时也会失败，先在宿主 manifest 的 "
+                           "<queries> 里声明这个包" % failed)
+        if how is None:
+            component = self._launcher(package)
+            # 带上 MAIN/LAUNCHER，和桌面图标、launchApp 的 intent 一样，系统才会按同样的规则找回已有的任务。
+            # NEW_TASK|CLEAR_TASK 回到首页而不杀进程；绝不用强制停止：对宿主包会让无障碍服务被系统关掉
+            flags = "0x10008000" if reset else "0x10200000"
+            self.adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n %s -f %s"
+                           % (component, flags))
+            how = ("重置并打开 " if reset else "打开 ") + component
         session = Session.current()
         session.meta["launched"] = sorted(set(session.meta["launched"]) | {package})
         session.save()
         session.log({"kind": "launch", "step": session.meta["steps"], "package": package, "reset": reset})
         time.sleep(0.3)
         out = self.observe(screenshot=screenshot, wait_ms=500)
-        out.text = "已%s %s\n" % ("重置并打开" if reset else "打开", component) + out.text
+        out.text = "已" + how + "\n" + ("⚠ " + warning + "\n" if warning else "") + out.text
         return out
 
     def _launcher(self, package):
@@ -870,16 +947,22 @@ class Toolkit:
         for key, state in labels.items():
             if key in snapshots:
                 assigned[key] = state
+        auto = []
         for key, state in labels.items():
             for name in snapshots:
                 if name.startswith(key + ".") and name not in assigned:
                     assigned[name] = state
+                    auto.append("%s→%s" % (name, state))
         for name, state in assigned.items():
             snapshots["%s#%s" % (state, name)] = snapshots.pop(name)
         live = live or not snapshots
         resp = self.bridge.request(dict({"cmd": "check", "snapshots": snapshots, "live": live, "waitMs": wait_ms},
                                         **flow_arg(flow)))
-        return Output(render_check(resp), ok=not [w for w in resp["warnings"] if w["kind"] in SEVERE_CHECKS])
+        text = render_check(resp)
+        if auto:
+            text = ("按页面编号自动归入的附加样本：%s。附加样本可能是同一 Activity 里的另一种屏幕，不是同一个状态的单独标注"
+                    "（例如 --label P4.4=另一个状态）\n" % "、".join(auto)) + text
+        return Output(text, ok=not [w for w in resp["warnings"] if w["kind"] in SEVERE_CHECKS])
 
     def run(self, flow, timeout=600, quiet=False, save_trace=None, stream=None):
         """运行流程。stream 是逐行回调（CLI 用来实时打印）；返回值里带结果和轨迹的结尾部分。"""
@@ -974,11 +1057,17 @@ def _trace_text(line):
 
 def render_check(resp):
     names = [s["name"] for s in resp["samples"]]
-    width = max([len(n) for n in names] + [4])
+    # 标注过的样本名是「状态id#样本」，列名只写样本，对应关系在开头列一次，矩阵就不会被长的状态名撑宽
+    short = [n.split("#", 1)[1] if "#" in n else n for n in names]
+    width = max([len(n) for n in short] + [4])
     rows = [("状态 " + s["id"], s) for s in resp["states"]] + \
            [("拦截器 " + i["id"] + (" (全局)" if i.get("global") else ""), i) for i in resp["interceptors"]]
     lw = max([len(r[0]) for r in rows] + [6])
-    out = [" " * lw + "  " + "  ".join(n.ljust(width) for n in names)]
+    out = []
+    labelled = ["%s→%s" % tuple(reversed(n.split("#", 1))) for n in names if "#" in n]
+    if labelled:
+        out.append("样本对应的状态：" + "、".join(labelled))
+    out.append(" " * lw + "  " + "  ".join(n.ljust(width) for n in short))
     for label, row in rows:
         cells = []
         for name in names:
@@ -994,19 +1083,39 @@ def render_check(resp):
             if why:
                 out.append("%s 不匹配: %s" % (label, why))
     out.append("")
-    severe = [w for w in resp["warnings"] if w["kind"] in SEVERE_CHECKS]
-    hints = [w for w in resp["warnings"] if w["kind"] not in SEVERE_CHECKS]
+    warnings = _merge_warnings(resp["warnings"])
+    severe = [w for w in warnings if w[0] in SEVERE_CHECKS]
+    hints = [w for w in warnings if w[0] not in SEVERE_CHECKS]
     if severe:
         out.append("问题（要修）:")
-        for w in severe:
-            out.append("  [%s] %s" % (w["kind"], w["message"]))
+        for kind, message in severe:
+            out.append("  [%s] %s" % (kind, message))
     if hints:
         out.append("提示（确认是有意的就可以不管，例如更具体的状态排在前面的有序兜底）:")
-        for w in hints:
-            out.append("  [%s] %s" % (w["kind"], w["message"]))
+        for kind, message in hints:
+            out.append("  [%s] %s" % (kind, message))
     if not resp["warnings"]:
         out.append("没有发现问题")
     return "\n".join(out)
+
+
+def _merge_warnings(warnings):
+    """多个状态共用同一个候选列表时，同一条提示会对每个状态各出一遍（只差开头的 after 'xxx'）：合并成一条。"""
+    groups = {}
+    for w in warnings:
+        m = re.match(r"after '([^']*)', (.*)$", w["message"], re.S)
+        key = (w["kind"], m.group(2) if m else w["message"], bool(m))
+        groups.setdefault(key, []).append(m.group(1) if m else None)
+    merged = []
+    for (kind, rest, grouped), states in groups.items():
+        if not grouped:
+            merged.append((kind, rest))
+            continue
+        names = ", ".join("'%s'" % s for s in states[:5])
+        if len(states) > 5:
+            names += " 等 %d 个状态" % len(states)
+        merged.append((kind, "after %s, %s" % (names, rest)))
+    return merged
 
 
 # 样本被错误的状态匹配、拦截器误伤正常页面：一定要修。歧义、太宽、没人匹配：可能是有意的

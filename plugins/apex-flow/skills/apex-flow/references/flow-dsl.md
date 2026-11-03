@@ -102,6 +102,8 @@ public final class ShopFlows {
 |---|---|---|
 | `ScreenSnapshot` | `com.github.susanaluis877.apex.node` | `nodes()`（所有窗口的节点，先序遍历）、`getPackageName()`、`getActivity()`、`getWindows()`、`getScreenWidth()` / `getScreenHeight()` |
 | `UiNode` | `com.github.susanaluis877.apex.node` | `getText()`、`getDesc()`、`getViewId()`（完整 id，形如 `com.foo:id/title`）、`getClassName()`、`getBounds()`、`getRange()`、`getStateDescription()`、`isChecked()` / `isEnabled()` / `isSelected()` / `isVisible()`、`getParent()`、`getChildren()` |
+| `Bounds`（`getBounds()` 的返回值） | `com.github.susanaluis877.apex.node` | `getLeft()` / `getTop()` / `getRight()` / `getBottom()`、`width()` / `height()`、`centerX()` / `centerY()`、`isEmpty()`。不是 `android.graphics.Rect`，没有 `.left`、`.bottom` 这类字段 |
+| `ScreenMatcher` | `com.github.susanaluis877.apex.match` | `Match.*`（`has`、`allOf`、`pkg`、`custom`…）的返回类型。把条件存进变量、写成方法返回值时用它（没有叫 `Match` 的类型）；`matches(screen)` 判断一屏 |
 | `Selector`（`By.xxx(...)` 的返回值） | `com.github.susanaluis877.apex.match` | `findFirst(screen)`（没找到返回 null）、`findAll(screen)`、`matches(node)`、`explainMismatch(screen)`。默认只找可见节点，要找不可见的加 `.visible(false)`。**不可变**：每个链式方法都返回新对象，选择器常量可以放心共用 |
 | `ActionContext` | `com.github.susanaluis877.apex.action` | `screen()`、`refresh()`（重新抓快照并返回它）、`click(node)`（返回是否成功）、`perform(action)`（返回 true 表示成功，软失败、硬失败都是 false）、`sleep(ms)`、`isCancelled()` |
 | `Match.custom(fn)` | `com.github.susanaluis877.apex.match` | `fn` 收到 `ScreenSnapshot`，返回 boolean |

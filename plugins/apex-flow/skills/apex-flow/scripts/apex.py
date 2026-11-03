@@ -106,6 +106,7 @@ def build_parser():
 
     s = sub.add_parser("status", help="当前或最近一次运行（包括宿主界面里发起的）的状态、结果和轨迹")
     s.add_argument("--limit", type=int, default=40, help="最多显示多少条轨迹，-1 为全部")
+    s.add_argument("--wait", type=int, default=0, metavar="S", help="有流程在运行时先等它结束，最多等 S 秒（上限 120）")
 
     s = sub.add_parser("export", help="把流程（Java DSL 引用或 JSON）写成 JSON，并确认解析回来与原流程相等")
     s.add_argument("flow", help="com.foo.Flows#method，或流程文件")
@@ -161,7 +162,7 @@ def dispatch(kit, args):
         return kit.run(args.flow, timeout=args.timeout, quiet=args.quiet, save_trace=args.save_trace,
                        stream=lambda line: print(line, flush=True))
     if c == "status":
-        return kit.status(limit=args.limit)
+        return kit.status(limit=args.limit, wait_s=args.wait)
     if c == "export":
         return kit.export(args.flow, args.out)
     if c == "push":

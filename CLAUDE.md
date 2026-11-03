@@ -164,6 +164,11 @@ claude plugin validate ./              # 检查插件市场和插件清单
 - `deploy`：`gradlew :module:assembleDebug` → `adb install -r -t` → 等新进程、调试桥和服务就绪。demo 上一轮约 2~4 秒。
 
 - 有流程在运行时（例如在宿主界面里点了「运行」），引擎线程被占着：`observe` 直接返回 `status` 的进度和原图截图，`act` 直接报 BUSY，不再干等 60 秒；`act` 之后发现启动了流程会提醒。截图前后用 `overlay` 命令隐藏状态悬浮窗。
+- `status` 的 `wait_s`（命令行 `--wait`）和运行中 `observe` 的 `wait_ms` 会等宿主界面发起的运行结束，最多 120 秒；之前 AI 只能自己 `sleep` 再反复查。
+- `launch`（不 reset 时）在 Apex 可用时走调试桥的 `launchApp`，和流程运行时落点一致；`launchApp` 打不开（宿主缺 `<queries>`）才退回 adb 并提醒。adb 启动带上 MAIN/LAUNCHER：只按组件启动时系统找回已有任务的规则不同，落点和流程不一样（apex-lab 第二轮回归里便签一个停在详情页、一个回到列表）。
+- `deploy` / `setup` 安装后删掉电脑上缓存的快照：宿主进程重启后设备上的快照没了，之前的 @编号会撞 `STALE_SNAPSHOT`；设备报这个错时也换成“先 observe”的说明。
+- 快照一个窗口都没有时（Android 14 对无障碍数据敏感的界面、宿主关掉了 `isAccessibilityTool`），`observe` / `act` 说明原因，不再报“进入了 None”。
+- `check` 的输出：只差开头 `after 'xxx'` 的同一条提示合并成一条；矩阵列名只写样本编号，样本和状态的对应、按页面编号自动归入的附加样本在开头列一次。apex-lab 第二轮回归里一次 `check` 从 39 KB 降到 9.5 KB。
 - 页面结构：只列可操作元素（带 `@handle`、类型、标签、状态、中心坐标）和不属于任何可操作元素的文本；没有文本的可点击容器用子孙文本拼标签。标为不可见但可操作、有文本的节点（滚轮选择器的列）也列出来。
 - 页面身份（P1、P2…）：包名、弹窗状态、选中的标签页（顶部或底部 25% 区域里 selected 的短文字；选中的标签常常不可点击）都要相同；两边都有标题时只看标题和 Activity，否则按 Activity、id 集合和短文本集合的相似度，阈值 0.6。同一页面内容变化较大时另存样本 `P3.2`…（每页最多 5 份）。
 - 页面标题：窗口标题出现在顶部区域时用它（ColorOS 时钟的窗口标题都是「时钟」，不在页面上，所以不用），否则取顶部区域第一段不可点击的短文字。
@@ -212,6 +217,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
 ## 发布
 
 1. 修改 `gradle.properties` 的 `VERSION_NAME`（注释里的坐标也一起改）和 README 里的依赖版本。调试桥协议或插件有变化时，同步 `plugin.json` 的 `version` 和 `apexlib/mcp.py` 的 `SERVER_VERSION`；协议不兼容时两边的 `PROTOCOL` 一起加 1。
+   - 已安装的插件按 `plugin.json` 的 `version` 缓存：版本号不变时 `claude plugin update` 说已是最新，装了插件的人拿不到新内容（只能卸载重装）。所以插件有改动就要改版本号。只改插件时单独升插件的补丁号、不打 tag（例如 SDK 0.6.1 时插件 0.6.2），下次 SDK 发版再对齐；`doctor` 只比较 `PROTOCOL`，版本号不同不影响使用。
 2. 跑 test、lint 和 `publishToMavenLocal`。
 3. 在 `feat/...` 分支上提交，推送分支。
 4. 打 annotated tag，名字和版本号完全一致，推送 tag。

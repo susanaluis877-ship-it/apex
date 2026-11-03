@@ -95,7 +95,7 @@
 | `scrollTo` | `target`，可选 `container`、`direction`（默认 `forward`）、`maxSwipes`（默认 10） | 一直滚动直到 target 出现；滚到头（列表报告不能再滚，或内容不再变化）或次数用完是**软失败** |
 | `scroll` | `direction`: `forward`/`backward`/`up`/`down`/`left`/`right`，可选 `target` | 滚一次。方向动作不支持时自动退到 forward/backward，再不行就滑动；已经到头时软失败 |
 | `tap` | `x`,`y` 或 `xRatio`,`yRatio` | 坐标点击，最后的手段 |
-| `swipe` | `from`,`to` 或 `fromRatio`,`toRatio`，可选 `durationMs` | |
+| `swipe` | `from`,`to`（像素，`[x, y]`）或 `fromRatio`,`toRatio`（屏幕比例，`[0.5, 0.8]`），可选 `durationMs` | 坐标写成两个数的数组，不是对象 |
 | `back` / `home` / `recents` / `notifications` | | 全局动作 |
 | `launchApp` | `package` | 用宿主 App 启动（宿主要声明 `<queries>`） |
 | `sleep` | `ms` | |

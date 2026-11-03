@@ -11,7 +11,7 @@ import traceback
 from .errors import ApexError
 from .tools import Toolkit
 
-SERVER_VERSION = "0.6.1"
+SERVER_VERSION = "0.6.2"
 KNOWN_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 
 INSTRUCTIONS = (
@@ -49,7 +49,8 @@ TOOLS = [
          "screenshot": SCREENSHOT,
          "grep": {"type": "string", "description": "只列出文本/描述/id 包含它的节点（含不可见节点），并指出点击会落在哪个祖先"},
          "full": {"type": "boolean", "description": "完整节点树（很长，只在页面结构不够用时看）"},
-         "wait_ms": {"type": "integer", "description": "先等这么久再等界面安静"}}}},
+         "wait_ms": {"type": "integer", "description": "先等这么久再等界面安静；有流程在运行时（例如在宿主界面里点了「运行」）"
+                                                       "先等它结束，最多等这么久"}}}},
     {"name": "act",
      "description": "执行一个动作，返回结果、和上一屏的变化、预期是否达成、警告（没变化、离开应用、弹窗、打转、长时间没进展）"
                     "以及新页面。action 可以是简写：click @12、longClick @12、setText @12 文本、scroll @12 forward、"
@@ -84,7 +85,8 @@ TOOLS = [
          "max_swipes": {"type": "integer"},
          "container": {"type": "object", "description": "要滚动的容器选择器，默认第一个可滚动区域"},
          "screenshot": SCREENSHOT}}},
-    {"name": "launch", "description": "打开 App 首页；reset=true 时清掉它的任务栈回到首页（不会强制停止，不影响无障碍服务）。",
+    {"name": "launch", "description": "打开 App。默认走和流程里一样的 launchApp，落点和流程运行时一致（打不开时会改用 adb 并提醒"
+                                      "宿主缺 <queries>）；reset=true 时清掉它的任务栈回到首页（不会强制停止，不影响无障碍服务）。",
      "inputSchema": {"type": "object", "required": ["package"], "properties": {
          "package": {"type": "string"}, "reset": {"type": "boolean"}, "screenshot": SCREENSHOT}}},
     {"name": "plan",
@@ -121,7 +123,8 @@ TOOLS = [
      "description": "当前或最近一次运行的状态、结果和最近的轨迹，包括在宿主 App 界面里点「运行」发起的运行。"
                     "流程运行期间 observe / act 拿不到页面，用它看进度。",
      "inputSchema": {"type": "object", "properties": {
-         "limit": {"type": "integer", "description": "最多返回多少条轨迹，默认 40；-1 为全部"}}}},
+         "limit": {"type": "integer", "description": "最多返回多少条轨迹，默认 40；-1 为全部"},
+         "wait_s": {"type": "integer", "description": "有流程在运行时先等它结束再返回，最多等这么多秒（上限 120）"}}}},
     {"name": "export",
      "description": "把流程（通常是 Java DSL 写的 flowRef）写成 JSON，只在项目确实需要 JSON 时用（远程下发、放进 assets、"
                     "推到 runner）。设备上会确认解析回来和原流程相等；有内联代码时会说明在哪个状态、哪个动作，不能转。",
@@ -169,7 +172,7 @@ def call_tool(kit, name, args):
     if name == "validate":
         return kit.validate(args["flow"])
     if name == "status":
-        return kit.status(limit=args.get("limit", 40))
+        return kit.status(limit=args.get("limit", 40), wait_s=args.get("wait_s", 0))
     if name == "check":
         return kit.check(args["flow"], samples=args.get("samples"), labels=args.get("labels"),
                          live=args.get("live", False))

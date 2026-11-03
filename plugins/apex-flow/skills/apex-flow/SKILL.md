@@ -19,9 +19,9 @@ description: 用 Apex SDK 为 Android App 编写自动化流程（Java DSL 优�
 
 **两种模式，自动切换**：Apex 调试桥能用且无障碍服务已连接时，`observe` / `act` 走 Apex（页面结构和 Apex 运行时看到的一致，选择器在设备上验证）；宿主没装、服务没开时自动改用 **adb 模式**（uiautomator 看页面、input 操作），只用来做安装、开启服务这类准备工作，输出开头会标明。adb 模式下看到的选择器不要写进流程。
 
-**有流程在运行时**（`run` 之外，例如你点了宿主界面上的「运行」），`observe` 只能给出它的进度，`act` 会报 BUSY；用 `status` 看当前或最近一次运行的进度、结果和轨迹（宿主界面发起的运行也能看到），等它结束再继续。
+**有流程在运行时**（`run` 之外，例如你点了宿主界面上的「运行」），`observe` 只能给出它的进度，`act` 会报 BUSY；用 `status` 看当前或最近一次运行的进度、结果和轨迹（宿主界面发起的运行也能看到）。要等它结束就用 `status` 的 `wait_s`（最多 120 秒，没结束就再调一次），或者 `observe` 的 `wait_ms`，不要用 `sleep` 轮询。
 
-页面结构里每个可操作元素是一行：`@引用 类型 "标签" 状态 (中心坐标)`。没有自己文字的容器显示成 `含「A」「B」`，A、B 是它里面各个节点的文字，要分开用，不能把整串当成一个文本。`@引用` 只在当前这一屏有效；`act` 会把它换成在设备上验证过的选择器并告诉你用了哪个——写流程时用那个选择器。
+页面结构里每个可操作元素是一行：`@引用 类型 "标签" 状态 (中心坐标)`。没有自己文字的容器显示成 `含「A」「B」`，A、B 是它里面各个节点的文字，要分开用，不能把整串当成一个文本。`@引用` 只在当前这一屏有效，`deploy` / `setup` 之后全部失效；`act` 会把它换成在设备上验证过的选择器并告诉你用了哪个——写流程时用那个选择器。
 
 ## 绝对不要
 
@@ -86,14 +86,14 @@ description: 用 Apex SDK 为 Android App 编写自动化流程（Java DSL 优�
 1. `history` 回顾成功路径；对每个要用到的页面调用 `features` 拿到独有特征和推荐 matcher。推荐只是起点：它只对照了这次到过的页面，挑的时候按 [references/selectors.md](references/selectors.md) 自己判断。
 2. 在宿主项目里用 **Java DSL** 写流程（[references/flow-dsl.md](references/flow-dsl.md)；语义、默认值和常用写法见 [references/flow-json.md](references/flow-json.md)，两种写法是同一个模型）。内置的条件和动作能表达的就别写代码；比较数值、按规则挑一项、需要循环时用内联的 `Match.custom(screen -> ...)` / `Actions.run(ctx -> ...)`。要点：
    - 一个页面一个状态：`match` 用页面独有的、稳定的特征（标题、固定的标签文字、语义 id），加 `pkg(...)`；动作用 `act` 结果里验证过的选择器（JSON 写法 `{"id": "x"}` 对应 `By.id("x")`）。
-   - 从任何起点都能跑：起始状态通常是 `always()` + `launchApp(...)`，后面的状态再识别首页。`launchApp` 之后落在哪一页因 App 和 ROM 而异（有的回首页，有的停在上次的深层页面），**先实测**：把目标 App 停在深层页面，再 `act launch 包名` 看落在哪。
+   - 从任何起点都能跑：起始状态通常是 `always()` + `launchApp(...)`，后面的状态再识别首页。`launchApp` 之后落在哪一页因 App 和 ROM 而异（有的回首页，有的停在上次的深层页面），**先实测**：把目标 App 停在深层页面，再 `launch 包名` 看落在哪（它和流程里的 `launchApp` 走同一条路，落点一致；打不开时会提示宿主缺 `<queries>`）。
    - 目标已经达成时（开关已经开着、今天已经签过到）走一个直接成功的分支，保证流程可以重复跑。
    - 探索时遇到的弹窗做成拦截器（宿主已有全局拦截器的除外）。
    - 屏幕外的入口用 `scrollTo`，不要用固定次数的 `swipe`。
    - 「同一个列表项里同时有 A 和 B」用 `hasDescendant`，不要写成两个独立的 `has`（可能分属两行）；操作那一行里的控件用 `inside`。
    - 不确定的地方宁可多加一个状态，也不要把多页的操作塞进一个状态的动作列表里。
 3. `deploy` 编译安装（几秒到几十秒，编译错误会原样返回，修了再 deploy），然后 `validate com.foo.flows.XxxFlows#method` 修到通过。
-4. `check com.foo.flows.XxxFlows#method`，用 `labels` 把探索时的样本对应到状态（例如 `{"P2": "home", "P2.2": "home_scrolled"}`）。只写 `P2` 时它的附加样本 `P2.2` 等也算同一个状态；附加样本可能是完全不同的屏幕（例如同一个 Activity 的另一个标签页），先看 `history` 里每个样本的说明，不是同一状态的要单独写出来。命令行写 `check com.foo.flows.XxxFlows#method --label P2=display P5=done`；要加上自己另存的样本时，用 `--samples` 列出会话的 `pages` 目录和这些文件（这时 `--label` 的键写样本文件名）。所有警告都要处理或说清楚为什么可以忽略。
+4. `check com.foo.flows.XxxFlows#method`，用 `labels` 把探索时的样本对应到状态（例如 `{"P2": "home", "P2.2": "home_scrolled"}`）。只写 `P2` 时它的附加样本 `P2.2` 等也算同一个状态；附加样本可能是完全不同的屏幕（例如同一个 Activity 的另一个标签页），先看 `history` 里每个样本的说明，不是同一状态的要单独写出来。命令行写 `check com.foo.flows.XxxFlows#method --label P2=display P5=done`；要加上自己另存的样本时，用 `--samples` 列出会话的 `pages` 目录和这些文件（这时 `--label` 的键写样本文件名）。所有警告都要处理或说清楚为什么可以忽略。依赖运行时数据的条件（例如读 `AtomicReference` 里前面状态存下的值）在 `check` 时拿不到值，这些状态只能靠真机运行验证。
 
 ## 第 4 步：真机运行，修到通过
 
