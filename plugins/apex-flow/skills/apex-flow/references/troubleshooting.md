@@ -34,7 +34,7 @@
 - `already at the end of ...` / `reached the end of ...` —— 列表已经到头。`scrollTo` 换个方向，或者目标不在这个列表里。
 - `... is not scrollable now (its content fits on the screen)` —— 列表一屏放得下，现在不能滚；目标不在屏幕上就是真的没有。SDK 不会改去滚外层容器（外层常是左右翻页的 ViewPager，会翻到别的标签页）。
 - `no scrollable list on screen; skipped ViewPager ...` —— 没写容器时不会滚左右翻页的容器；要翻页就把它写成 `container`。
-- `skipped ACTION_CLICK on ancestor ...: it is a container` —— 目标本身不可点击，可点击的是整个列表 / 月视图，所以按目标中心坐标点了。这是正常的处理，不用管。
+- `skipped ACTION_CLICK on ancestor ...: it is a container` —— 目标本身不可点击，可点击的是整个列表 / 网格，所以按目标中心坐标点了。这是正常的处理，不用管。
 - `performAction returned false` —— 节点不接受这个操作。`click` 的 auto 模式会自动退到坐标点击；`scroll` 会自动换方向或滑动；`setProgress` 在值没变化时也会返回 false（已经处理）。
 - `stale node (not from the latest snapshot)` / `node no longer exists` —— 页面在动作之间变了，引擎会重试，一般不用管。
 - 动作成功但页面没变化：点到了不响应的地方（选择器命中的是别的同名节点？）、页面还在加载（加 `delayMs` 或拆成两个状态）。

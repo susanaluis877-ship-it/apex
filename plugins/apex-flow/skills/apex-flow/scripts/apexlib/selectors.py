@@ -67,7 +67,7 @@ def dynamic_regex(text):
 
 
 def click_owner(n):
-    """click 实际落到的节点：自己或最近的可点击祖先。祖先是整个列表、月视图这类容器时，SDK 改按 n 的中心坐标点，落点就是 n。"""
+    """click 实际落到的节点：自己或最近的可点击祖先。祖先是整个列表、网格这类容器时，SDK 改按 n 的中心坐标点，落点就是 n。"""
     if "clickable" in n.f:
         return n
     for a in n.ancestors():
