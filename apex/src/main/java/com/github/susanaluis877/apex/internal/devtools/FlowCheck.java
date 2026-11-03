@@ -104,14 +104,20 @@ public final class FlowCheck {
                 }
             }
         }
-        // 同一个 next 里多个候选匹配同一个样本时，排在前面的胜出
+        // 同一个 next 里多个候选匹配同一个样本时，排在前面的胜出；状态自己（自环）总是最后检查
         for (State from : flow.getStates()) {
             if (from.isTerminal() || from.getNext().size() < 2) {
                 continue;
             }
+            List<String> order = new ArrayList<>(from.getNext());
+            String why = "comes first in next " + from.getNext();
+            if (order.remove(from.getId())) {
+                order.add(from.getId());
+                why += " (a state listing itself is checked last)";
+            }
             for (String name : snapshots.keySet()) {
                 List<String> matched = new ArrayList<>();
-                for (String candidate : from.getNext()) {
+                for (String candidate : order) {
                     Row row = stateRows.get(candidate);
                     if (row != null && row.matches.contains(name)) {
                         matched.add(candidate);
@@ -122,12 +128,11 @@ public final class FlowCheck {
                         && !matched.get(0).equals(label)) {
                     warn(warningList, warnings, "wrong-winner", from.getId(), name, "after '" + from.getId()
                             + "', sample '" + name + "' of '" + label + "' would enter '" + matched.get(0)
-                            + "' instead, because '" + matched.get(0) + "' comes first in next " + from.getNext()
-                            + " and also matches it");
+                            + "' instead, because '" + matched.get(0) + "' " + why + " and also matches it");
                 } else if (matched.size() >= 2) {
                     warn(warningList, warnings, "ambiguous", from.getId(), name, "after '" + from.getId()
                             + "', sample '" + name + "' matches " + matched + "; '" + matched.get(0)
-                            + "' wins because it comes first in next");
+                            + "' wins because it " + why);
                 }
             }
         }

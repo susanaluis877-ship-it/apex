@@ -125,9 +125,8 @@ public class FlowBuilderTest {
                 .state("orphan", s -> s.match(always()).endSuccess().maxRetries(-1))
                 .interceptor("ad", i -> i.match(always()));
         List<String> messages = problems(b);
-        assertTrue(messages.toString(), messages.contains("state 'a'.next[0]: state cannot list itself in next "
-                + "(retries already cover staying on a page)"));
-        assertTrue(messages.contains("state 'a'.next[1]: unknown state 'missing'"));
+        assertTrue(messages.toString(), messages.contains("state 'a'.next[1]: unknown state 'missing'"));
+        assertTrue("next 里可以有自己", messages.stream().noneMatch(m -> m.startsWith("state 'a'.next[0]")));
         assertTrue(messages.contains("state 'b'.match: match is required"));
         assertTrue(messages.contains("state 'b'.id: duplicate state id"));
         assertTrue(messages.contains("state 'b'.next: terminal state cannot have next"));

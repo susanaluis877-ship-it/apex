@@ -21,6 +21,7 @@ import com.github.susanaluis877.apex.FlowListener;
 import com.github.susanaluis877.apex.RunResult;
 import com.github.susanaluis877.apex.RunResult.Status;
 import com.github.susanaluis877.apex.TraceEvent;
+import com.github.susanaluis877.apex.action.Action;
 import com.github.susanaluis877.apex.flow.Flow;
 import com.github.susanaluis877.apex.internal.ApexLog;
 import com.github.susanaluis877.apex.internal.Registry;
@@ -340,6 +341,106 @@ public class FlowEngineTest {
         for (TraceEvent e : r.getTrace()) {
             assertTrue(e.toString(), e.getType() != TraceEvent.Type.LOOP);
         }
+    }
+
+    // ---- 自环 ----
+
+    /** 深层页面：「Level n」加一个返回按钮，n 为 0 时是首页。返回在 {@code lagMs} 之后生效，{@code lost} 时不生效。 */
+    private void levels(int[] depth, long lagMs, boolean lost) {
+        java.util.function.Supplier<ScreenSnapshot> page = () -> depth[0] == 0 ? screen(frame(text("Home")))
+                : screen(frame(text("Level " + depth[0]), button("up", "Up")));
+        device.show(page);
+        device.onGlobal(Action.GlobalAction.BACK, () -> {
+            if (!lost) {
+                device.after(lagMs, () -> {
+                    depth[0]--;
+                    device.show(page);
+                });
+            }
+        });
+    }
+
+    private static Flow backOut(String top) {
+        // next 里自己写在前面，也要排在其他候选之后检查
+        return new Flow.Builder("back_out").start("deep")
+                .defaults(d -> d.timeoutMs(10_000).retryIntervalMs(3_000).maxRetries(2))
+                .state("deep", s -> s.match(has(By.id("up"))).action(back()).next("deep", "top"))
+                .state("top", s -> s.match(has(By.text(top))).endSuccess())
+                .build();
+    }
+
+    @Test
+    public void selfLoopRepeatsUntilAnotherCandidateMatches() {
+        int[] depth = {3};
+        levels(depth, 0, false);
+        RunResult r = run(backOut("Level 1"));
+        assertEquals(r.toString(), Status.SUCCESS, r.getStatus());
+        assertEquals("Level 1 同时匹配 deep 和 top，top 胜出", Arrays.asList("deep", "deep", "top"), r.getPath());
+        assertEquals(Arrays.asList("back", "back"), device.log);
+        assertEquals(Arrays.asList("enter:deep:1", "enter:deep:2", "enter:top:3"), events);
+        List<String> enters = new ArrayList<>();
+        for (TraceEvent e : r.getTrace()) {
+            if (e.getType() == TraceEvent.Type.STATE_ENTER) {
+                enters.add(e.getMessage());
+            }
+        }
+        assertTrue(enters.toString(), enters.get(1).startsWith("deep (step 2) again: page changed and still matches"));
+        assertTrue(enters.toString(), !enters.get(0).contains("again"));
+    }
+
+    @Test
+    public void selfLoopWaitsUntilTheActionTakesEffect() {
+        // 返回要 2 秒才生效：这期间页面还是原来那页，不能再按一次
+        int[] depth = {2};
+        levels(depth, 2_000, false);
+        RunResult r = run(backOut("Home"));
+        assertEquals(r.toString(), Status.SUCCESS, r.getStatus());
+        assertEquals(Arrays.asList("back", "back"), device.log);
+        assertTrue(device.logTimes.toString(), device.logTimes.get(1) - device.logTimes.get(0) >= 2_000);
+        assertEquals(Arrays.asList("deep", "deep", "top"), r.getPath());
+    }
+
+    @Test
+    public void selfLoopFallsBackToBoundedRetriesWhenThePageNeverChanges() {
+        int[] depth = {2};
+        levels(depth, 0, true);
+        RunResult r = run(backOut("Home"));
+        assertEquals(Status.TIMEOUT, r.getStatus());
+        assertEquals("页面没变时按 maxRetries 重试，不算再进入", Arrays.asList("back", "back", "back"), device.log);
+        assertEquals(Collections.singletonList("deep"), r.getPath());
+        assertTrue(r.getMessage(), r.getMessage().contains("retries=2"));
+    }
+
+    @Test
+    public void selfLoopResumesAPendingActionInsteadOfStartingOver() {
+        // b 一秒后才出现：页面变了，但 a 已经点过，应该从 b 续跑，而不是再进一次把 a 也重点一遍
+        device.show(screen(frame(button("a", "A"))));
+        device.after(1_000, () -> device.show(screen(frame(button("a", "A"), button("b", "B")))));
+        device.onClick("b", () -> device.show(screen(frame(text("finished")))));
+        Flow flow = new Flow.Builder("resume_self").start("form")
+                .state("form", s -> s.match(has(By.id("a"))).action(click(By.id("a")), click(By.id("b")))
+                        .next("form", "end"))
+                .state("end", s -> s.match(has(By.text("finished"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(r.toString(), Status.SUCCESS, r.getStatus());
+        assertEquals(Arrays.asList("click:a", "click:b"), device.log);
+        assertEquals(Arrays.asList("form", "end"), r.getPath());
+    }
+
+    @Test
+    public void selfLoopIsBoundedByMaxSteps() {
+        int[] count = {0};
+        device.show(() -> screen(frame(button("x", "Count " + count[0]))));
+        device.onClick("x", () -> count[0]++);
+        Flow flow = new Flow.Builder("forever").start("s").maxSteps(5)
+                .state("s", s -> s.match(has(By.id("x"))).action(click(By.id("x"))).next("s", "end"))
+                .state("end", s -> s.match(has(By.text("END"))).endSuccess())
+                .build();
+        RunResult r = run(flow);
+        assertEquals(Status.MAX_STEPS, r.getStatus());
+        assertEquals(Arrays.asList("s", "s", "s", "s", "s"), r.getPath());
+        assertEquals(5, device.log.size());
     }
 
     @Test

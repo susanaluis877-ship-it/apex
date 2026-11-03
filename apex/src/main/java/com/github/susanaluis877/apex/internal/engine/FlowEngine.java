@@ -30,6 +30,8 @@ import java.util.function.Consumer;
  * <p>每一轮：等界面安静 → 抓快照 → 先检查拦截器 → 再检查候选状态 → 都没有进展时按规则续跑或重试 → 检查超时。
  * <ul>
  *   <li>动作只在三种情况下执行：进入状态、从软失败的动作处续跑、页面在重试间隔内毫无变化时重跑。</li>
+ *   <li>{@code next} 里有状态自己时，它排在其他候选之后检查，并且要求本状态的动作都已完成、页面内容和进入时相比变了：
+ *       动作还没生效时（按了返回，原页面还没离开），这一轮看到的还是原页面，直接再进就会把动作重复执行一遍。</li>
  *   <li>拦截器处理完后不会重跑当前状态的动作；如果弹窗吞掉了点击，会由“页面无变化”的重试补上。</li>
  *   <li>当前状态和候选状态都不匹配时（过渡页、动画）只等待，不重试。</li>
  * </ul>
@@ -73,6 +75,8 @@ public final class FlowEngine {
     private final List<String> recentEntries = new ArrayList<>();
     private final Set<String> reportedLoops = new HashSet<>();
     private String loopNote;
+    /** 最近一次进入状态时（动作执行前）页面的内容指纹，判断自环时页面有没有变。 */
+    private long entryContent;
 
     /**
      * @param runId              本次运行的编号，出现在每一行日志和结果里
@@ -221,12 +225,22 @@ public final class FlowEngine {
                 continue;
             }
 
-            // 2. 候选状态，按声明顺序第一个匹配的胜出
+            // 2. 候选状态，按声明顺序第一个匹配的胜出；next 里的自己最后检查
             State entered = null;
             for (State candidate : candidates) {
                 if (candidate.getMatcher().matches(screen)) {
                     entered = candidate;
                     break;
+                }
+            }
+            boolean currentMatches = false;
+            boolean again = false;
+            if (entered == null && current != null) {
+                currentMatches = current.getMatcher().matches(screen);
+                if (currentMatches && loopsToItself(current) && pendingIndex < 0
+                        && Fingerprint.content(screen) != entryContent) {
+                    entered = current;
+                    again = true;
                 }
             }
             if (entered != null) {
@@ -238,11 +252,14 @@ public final class FlowEngine {
                 if (path.size() < MAX_PATH) {
                     path.add(entered.getId());
                 }
+                // StatusOverlay 从这条消息里取 "(step N)" 给轨迹着色，改格式时要一起改
                 tracer.event(Type.STATE_ENTER, ApexLogger.INFO, entered.getId(), entered.getId()
-                        + " (step " + steps + ")" + (entered.isTerminal() ? " [end: " + entered.getEnd() + "]" : "")
+                        + " (step " + steps + ")" + (again ? " again: page changed and still matches" : "")
+                        + (entered.isTerminal() ? " [end: " + entered.getEnd() + "]" : "")
                         + " on " + summary(screen));
                 notifyStateEntered(entered.getId(), steps);
                 long before = Fingerprint.of(screen);
+                entryContent = Fingerprint.content(screen);
                 checkLoop(entered.getId(), before);
                 Outcome o = runActions(entered.getId(), entered.getActions(), 0, screen);
                 if (o.fatal()) {
@@ -251,7 +268,7 @@ public final class FlowEngine {
                 if (entered.isTerminal()) {
                     return new Finish(entered.getEnd() == State.End.SUCCESS ? Status.SUCCESS : Status.FAILURE, null);
                 }
-                candidates = resolve(entered.getNext());
+                candidates = otherCandidates(entered);
                 retries = 0;
                 pendingIndex = o.failedIndex;
                 pendingReason = o.result.getMessage();
@@ -265,7 +282,6 @@ public final class FlowEngine {
             }
 
             // 3. 没有进展：续跑软失败的动作，或在页面毫无变化时重试
-            boolean currentMatches = current != null && current.getMatcher().matches(screen);
             long fp = Fingerprint.of(screen);
             boolean acted = false;
             if (currentMatches) {
@@ -382,6 +398,9 @@ public final class FlowEngine {
             sb.append(')');
             if (currentMatches) {
                 sb.append("; '").append(current.getId()).append("' still on screen");
+                if (loopsToItself(current)) {
+                    sb.append(" (re-enters itself once its actions are done and the page content changes)");
+                }
             } else {
                 sb.append("; left '").append(current.getId()).append("' (")
                         .append(current.getMatcher().explainMismatch(screen)).append(')');
@@ -527,12 +546,19 @@ public final class FlowEngine {
         return r;
     }
 
-    private List<State> resolve(List<String> ids) {
-        List<State> states = new ArrayList<>(ids.size());
-        for (String id : ids) {
-            states.add(flow.getState(id));
+    /** {@code next} 里除自己以外的候选，保持声明顺序；自己由 {@link #loopsToItself} 单独处理。 */
+    private List<State> otherCandidates(State state) {
+        List<State> states = new ArrayList<>(state.getNext().size());
+        for (String id : state.getNext()) {
+            if (!id.equals(state.getId())) {
+                states.add(flow.getState(id));
+            }
         }
         return states;
+    }
+
+    private static boolean loopsToItself(State state) {
+        return state.getNext().contains(state.getId());
     }
 
     private String currentId() {

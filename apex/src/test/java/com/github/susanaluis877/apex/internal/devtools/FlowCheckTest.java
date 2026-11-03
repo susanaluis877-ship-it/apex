@@ -74,6 +74,23 @@ public class FlowCheckTest {
     }
 
     @Test
+    public void aStateListingItselfIsCheckedLast() throws Exception {
+        // deep 的 next 里自己写在前面，但 top 先检查：「Level 1」页两个都匹配时进入 top
+        Flow flow = new Flow.Builder("back_out").start("deep")
+                .state("deep", s -> s.match(has(By.id("up"))).action(back()).next("deep", "top"))
+                .state("top", s -> s.match(has(By.text("Level 1"))).endSuccess())
+                .build();
+        Map<String, ScreenSnapshot> samples = new LinkedHashMap<>();
+        samples.put("deep", screen(frame(text("Level 1"), button("up", "Up"))));
+        samples.put("top", screen(frame(text("Level 1"), button("up", "Up"))));
+        JSONObject r = FlowCheck.check(flow, Collections.emptyList(), samples, false);
+        String wrong = message(r, "wrong-winner");
+        assertTrue(r.toString(), wrong.contains("sample 'deep' of 'deep' would enter 'top' instead"));
+        assertTrue(wrong, wrong.contains("(a state listing itself is checked last)"));
+        assertEquals("top 的样本由 top 胜出，不报错", 1, Collections.frequency(kinds(r), "wrong-winner"));
+    }
+
+    @Test
     public void reportsSampleNotMatchedByItsOwnState() throws Exception {
         Map<String, ScreenSnapshot> samples = new LinkedHashMap<>();
         samples.put("task.1", HOME);

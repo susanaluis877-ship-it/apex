@@ -13,6 +13,9 @@ import java.util.Objects;
  * 状态图里的一个状态：页面匹配条件 + 进入后执行的动作 + 期望的下一状态。
  *
  * <p>{@code next} 是有序的候选列表，引擎按顺序检查每个候选状态的匹配条件，第一个匹配的就是下一状态。
+ * {@code next} 里可以有状态自己（自环），不管写在哪个位置都最后检查：其他候选都不匹配、本状态的动作都已完成、
+ * 页面内容和这次进入时相比变了、并且仍然匹配本状态时，再进入一次（例如一直按返回，直到回到首页）。
+ * 页面没变时不会再进入，而是按 {@code retryIntervalMs}/{@code maxRetries} 重试，免得动作还没生效就又执行一遍。
  * 终止状态（{@link End#SUCCESS}/{@link End#FAILURE}）执行完动作后结束流程，不能有 {@code next}。
  */
 public final class State {

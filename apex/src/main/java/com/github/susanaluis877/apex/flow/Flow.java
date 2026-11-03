@@ -324,9 +324,6 @@ public final class Flow {
                     String target = next.get(j);
                     if (target == null || !byId.containsKey(target)) {
                         problems.add(stateProblem(i, sid, "next", j, "unknown state '" + target + "'"));
-                    } else if (target.equals(sid)) {
-                        problems.add(stateProblem(i, sid, "next", j,
-                                "state cannot list itself in next (retries already cover staying on a page)"));
                     } else if (!seen.add(target)) {
                         problems.add(stateProblem(i, sid, "next", j, "duplicate next state '" + target + "'"));
                     }

@@ -28,7 +28,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.5.0")
+    implementation("com.github.susanaluis877-ship-it:apex:0.6.0")
 }
 ```
 
@@ -78,7 +78,7 @@ RunHandle handle = Apex.run(flow, result -> Log.i("Apex", "finished: " + result)
 |---|---|
 | `match` | 页面匹配条件，判断“当前是不是这个页面” |
 | `actions` | 进入状态后依次执行的动作 |
-| `next` | 有序的候选下一状态。按顺序检查它们的 `match`，第一个匹配的就是下一状态 |
+| `next` | 有序的候选下一状态。按顺序检查它们的 `match`，第一个匹配的就是下一状态。可以包含状态自己（见下面「动作什么时候执行」） |
 | `end` | `success` 或 `failure`：执行完动作后结束流程，不能再有 `next` |
 | `timeoutMs` | 等待下一状态出现的最长时间；对起始状态是等它出现的最长时间 |
 | `retryIntervalMs` / `maxRetries` | 页面毫无变化时，多久后重跑动作、最多几次 |
@@ -114,6 +114,16 @@ Apex.addGlobalInterceptor("close_ad", i -> i
 - **进入状态时执行一次。**
 - **某个动作软失败时续跑。** 软失败是指目标还没出现，或者用代码写的动作返回了 false。之后页面一有变化，或者页面不变但过了 `retryIntervalMs`，就从这个动作接着执行。
 - **页面毫无变化时重跑。** 页面在 `retryIntervalMs` 内一点没变，就重跑全部动作，最多 `maxRetries` 次。页面一直在变（例如正在加载）时不会重跑。不能重复执行的动作（例如下单）要设 `maxRetries(0)`。
+- **`next` 里有自己时再次进入。** 用来表达“一直做同一件事，直到到达别的页面”，例如一直按返回直到回到首页：
+
+  ```java
+  .state("deep", s -> s.match(has(By.desc("返回"))).action(back()).next("home", "deep"))
+  ```
+
+  - 自己不管写在哪个位置，都在其他候选之后检查。
+  - 只有本状态的动作都已完成、页面内容和这次进入时相比变了、并且仍然匹配本状态时，才再进入一次。页面没变（返回还没生效）时不会马上再执行，而是按上一条的规则重跑。
+  - 再次进入和普通的进入一样：步数加 1（受 `maxSteps` 限制），状态超时重新计时，轨迹里记为 `deep (step 3) again: ...`。
+  - 页面上有自己一直在变的内容（倒计时、轮播）时，动作还没生效页面就可能“变了”，这种页面上慎用。
 - **其他情况只等待。** 当前状态和候选状态都不匹配时（过渡页、动画），一直等到超时。
 
 ### 流程级设置

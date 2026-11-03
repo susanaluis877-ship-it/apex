@@ -49,7 +49,7 @@ public final class ShopFlows {
 |---|---|
 | `{"id", "start", "timeoutMs", "maxSteps", "maxInterceptions"}` | `new Flow.Builder(id).start(...).timeoutMs(...).maxSteps(...).maxInterceptions(...)` |
 | `"defaults": {...}` | `.defaults(d -> d.timeoutMs(...).retryIntervalMs(...).maxRetries(...).actionGapMs(...).interceptorMaxTimes(...).interceptorCooldownMs(...))` |
-| 状态 | `.state(id, s -> s.match(...).action(a1, a2).next("x", "y").timeoutMs(...).retryIntervalMs(...).maxRetries(...))` |
+| 状态 | `.state(id, s -> s.match(...).action(a1, a2).next("x", "y").timeoutMs(...).retryIntervalMs(...).maxRetries(...))`；`next` 里可以有自己（自环，规则见 flow-json.md），例如 `.state("deep", s -> s.match(...).action(back()).next("home", "deep"))` |
 | `"end": "success"` / `"failure"` | `.endSuccess()` / `.endFailure()` |
 | 拦截器 | `.interceptor(id, i -> i.match(...).action(...).maxTimes(...).cooldownMs(...))` |
 | `useGlobalInterceptors` / `excludeGlobalInterceptors` | `.useGlobalInterceptors(false)` / `.excludeGlobalInterceptors("id", ...)` |
