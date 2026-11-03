@@ -76,6 +76,8 @@ public final class StatusOverlay {
     private static final Pattern STEP = Pattern.compile("\\(step (\\d+)\\)");
 
     private static final long REFRESH_DELAY_MS = 150;
+    /** 展开且在运行时每隔这么久刷新一次，长动作期间没有新轨迹，已用时间也要走。 */
+    private static final long TICK_MS = 1_000;
     /** 改了窗口的触摸标志后等它生效再派发手势。 */
     private static final long TOUCH_UPDATE_MS = 80;
     /** 隐藏后等新的一帧画出来再截图。 */
@@ -106,6 +108,7 @@ public final class StatusOverlay {
         }
     };
     private final Runnable autoShow = () -> setVisibleOnMain(true);
+    private final Runnable tick = () -> onChange.run();
 
     private WindowManager.LayoutParams params;
     private FrameLayout root;
@@ -161,6 +164,7 @@ public final class StatusOverlay {
         monitor.removeListener(onChange);
         main.removeCallbacks(refreshTask);
         main.removeCallbacks(autoShow);
+        main.removeCallbacks(tick);
         if (root != null) {
             try {
                 windowManager.removeView(root);
@@ -357,8 +361,12 @@ public final class StatusOverlay {
             pillText = result != null ? result.getStatus().name() : "Apex";
         }
         pill.setText(dot(color).append(pillText));
+        main.removeCallbacks(tick);
         if (!expanded) {
             return;
+        }
+        if (view.isRunning()) {
+            main.postDelayed(tick, TICK_MS);
         }
         title.setText(dot(color).append(view.getFlowId() != null ? view.getFlowId() : "Apex: no run yet"));
         cancelButton.setVisibility(view.isRunning() ? View.VISIBLE : View.GONE);

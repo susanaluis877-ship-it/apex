@@ -11,7 +11,7 @@ import traceback
 from .errors import ApexError
 from .tools import Toolkit
 
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.6.1"
 KNOWN_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 
 INSTRUCTIONS = (

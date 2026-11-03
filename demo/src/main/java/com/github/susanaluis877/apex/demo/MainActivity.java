@@ -1,7 +1,9 @@
 package com.github.susanaluis877.apex.demo;
 
+import android.Manifest;
 import android.app.Activity;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -33,7 +35,8 @@ import java.util.List;
  * {@code adb shell am start -n com.github.susanaluis877.apex.demo/.MainActivity --es autorun flow --es flow brightness_max}
  * <ul>
  *   <li>{@code autorun}：{@code flow}（运行 {@code flow} 指定的流程）、{@code dsl}、{@code json}（内置演示）、
- *       {@code open}（只打开演示页面，供 apex.py run 使用）、{@code dump}（导出当前屏幕）</li>
+ *       {@code open}（只打开演示页面，供 apex.py run 使用）、{@code dump}（导出当前屏幕）、
+ *       {@code permission}（申请通知权限，弹出系统权限弹窗）</li>
  *   <li>{@code ad}、{@code soldOut}、{@code loseFirstClick}：内置演示的场景开关</li>
  *   <li>{@code cancelAfterMs}：开始运行后多久取消，用来演示取消</li>
  * </ul>
@@ -175,6 +178,14 @@ public class MainActivity extends Activity {
         if (mode.equals("open")) {
             // 只打开演示页面不运行流程，供 apex.py run 从电脑上运行（这些页面没有导出，adb 打不开）
             startActivity(HomeActivity.intent(this, ad.isChecked(), soldOut.isChecked(), loseFirstClick.isChecked()));
+        } else if (mode.equals("permission")) {
+            // 弹出系统权限弹窗，验证 Android 14 起对无障碍数据敏感的界面（需要服务声明 isAccessibilityTool）。
+            // 拒绝两次后系统不再弹出，要在应用信息里清除数据或重新安装
+            if (Build.VERSION.SDK_INT >= 33) {
+                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 1);
+            } else {
+                append("Android 13 以下通知不需要运行时权限，不会弹出权限弹窗");
+            }
         } else if (!Apex.isServiceConnected() && System.currentTimeMillis() - startedAt <= SERVICE_WAIT_MS) {
             handler.postDelayed(() -> autorun(mode, flowName, startedAt), 200);
         } else if (mode.equals("dump")) {

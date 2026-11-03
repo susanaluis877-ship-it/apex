@@ -28,11 +28,17 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.susanaluis877-ship-it:apex:0.6.0")
+    implementation("com.github.susanaluis877-ship-it:apex:0.6.1")
 }
 ```
 
 无障碍服务会随 AAR 自动合并进宿主的 manifest，不需要再声明。
+
+> **注意：服务默认声明为辅助功能工具（`android:isAccessibilityTool="true"`）。** Apex 用来开发无障碍工具，所以 SDK 的服务配置打开了这个属性。
+>
+> - **作用**：Android 14 及以上，对无障碍数据敏感的界面只对声明了它的服务可见、可操作。这类界面包括标记了 `accessibilityDataSensitive` 的控件，以及设置了 `filterTouchesWhenObscured` 的控件（例如系统的权限弹窗）。没有这个声明时，Apex 在这些页面上抓到的是空快照，也点不了里面的按钮。Android 12、13 上它只影响系统怎么归类和提示这个服务，不影响能看到哪些页面；更早的版本会忽略它。
+> - **上架要求**：这个属性表示“服务用来帮助残障用户”。上架 Google Play 时，只有符合无障碍工具定义的应用才能这样声明，否则可能被拒审或下架。其他应用商店也可能有类似要求。
+> - **不是无障碍工具的宿主要关掉它**：在宿主模块里放一份同名的 `src/main/res/xml/apex_accessibility_service_config.xml`，打包时宿主的同名资源会覆盖 SDK 里的。内容照抄 SDK 里这个文件，把 `isAccessibilityTool` 改成 `false`。SDK 升级后要对照新版本同步其他属性。
 
 ## 快速开始
 
@@ -448,7 +454,7 @@ python3 $A export com.foo.flows.SettingsFlows#brightnessMax -o app/src/main/asse
       <package android:name="com.foo" />
   </queries>
   ```
-- **上架 Google Play。** 使用无障碍 API 需要在 Play Console 里声明用途，并在应用内做显著披露。自动操作其他 App 是常见的拒审原因。
+- **上架 Google Play。** 使用无障碍 API 需要在 Play Console 里声明用途，并在应用内做显著披露。自动操作其他 App 是常见的拒审原因。SDK 默认声明了 `isAccessibilityTool`，不符合无障碍工具定义的应用要先关掉它，见「接入」一节。
 - **开启服务的系统限制：**
   - Android 13 及以上，非应用商店安装的 App 要先在应用信息里“允许受限设置”，才能开启服务。
   - 强制停止宿主 App（设置里的「强行停止」、`am force-stop`、部分清理加速软件）后，系统会把它的服务从已开启列表里移除，需要重新开启。这是 Android 本身的行为，所有机型都一样。
@@ -458,7 +464,7 @@ python3 $A export com.foo.flows.SettingsFlows#brightnessMax -o app/src/main/asse
   - Compose（未开启 `testTagsAsResourceId` 时）和 Flutter 页面通常没有 view id，可以改用文本、描述或坐标手势。
   - WebView 的节点可能不完整。
   - Toast 匹配不到。
-  - Android 14 及以上，标记为 `accessibilityDataSensitive` 的控件不可见。
+  - Android 14 及以上，对无障碍数据敏感的控件（例如系统权限弹窗）只在服务声明为辅助功能工具时可见。SDK 默认声明了；宿主关掉这个声明后它们不可见，见「接入」一节。
   - 节点特别多（超过 3000 个）的页面会被跳过。
 
 ## Demo
@@ -487,6 +493,7 @@ adb shell am start -n com.github.susanaluis877.apex.demo/.MainActivity --es auto
 - `json` / `dsl`：用对应写法运行内置演示。
 - `open`：只打开演示首页不运行，供 `apex.py run` 从电脑上运行。
 - `dump`：导出当前屏幕。
+- `permission`：申请通知权限，弹出系统权限弹窗（Android 13 及以上）。用来验证服务能不能看到、操作对无障碍数据敏感的界面；拒绝两次后系统不再弹出，要清除 demo 的数据或重新安装。
 
 场景开关：
 

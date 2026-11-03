@@ -139,7 +139,7 @@ claude plugin validate ./              # 检查插件市场和插件清单
   - 根布局是 FrameLayout，子视图要显式给 WRAP_CONTENT，否则默认撑满，文字变长时窗口不会变宽（真机上出现过「ho…」）。
   - 背景是 50% 不透明的白色衬底加细边框（完全透明或 30% 时，盖在内容多的页面上会和下面的文字叠成一片）；文字用深色加白色光晕（`setShadowLayer`）。试过浅色字加黑色阴影，在白底上发虚。
   - 轨迹按步骤着色：从 `STATE_ENTER` 消息里的 `(step N)` 取步数，相邻步骤颜色不同。改 `FlowEngine` 里这条消息的格式时要一起改 `StatusOverlay.STEP`。
-- **运行记录（`RunMonitor`）。** `ApexCore.run` 把每次运行（宿主代码和调试桥发起的都算）的状态、步数、最近 200 条轨迹和结果记进去，悬浮窗和调试桥的 `status` 命令都从这里读。之前宿主界面里点「运行」的那次，调试桥完全看不到。
+- **运行记录（`RunMonitor`）。** `ApexCore.run` 把每次运行（宿主代码和调试桥发起的都算）的状态、步数、最近 200 条轨迹和结果记进去，悬浮窗和调试桥的 `status` 命令都从这里读。之前宿主界面里点「运行」的那次，调试桥完全看不到。运行中的已用时间按注入的 `Clock` 从开始算（0.6.1）：原来取最近一条轨迹的时间，拨滚轮这类长动作期间一直不动。悬浮窗展开且在运行时每秒刷新一次，也是为了让它走。
 - **API 废弃。** `AccessibilityNodeInfo.isChecked()` 在 API 36 废弃，但替代方法只有 36 才有，所以继续用它并加了 `@SuppressWarnings`。
 
 ## 调试桥和 AI 工具链
@@ -193,14 +193,15 @@ claude plugin validate ./              # 检查插件市场和插件清单
 ## Demo 与真机调试
 
 - **固定 id。** demo 页面用 `res/values/ids.xml` 里的固定 id；`generateViewId()` 生成的 id 拿不到资源名，选择器匹配不到。
-- **自动运行参数。** `autorun`（`flow`/`json`/`dsl`/`open`/`dump`）、`flow`、`ad`、`soldOut`、`loseFirstClick`、`cancelAfterMs`，用法见 README 的 Demo 一节。
+- **自动运行参数。** `autorun`（`flow`/`json`/`dsl`/`open`/`dump`/`permission`）、`flow`、`ad`、`soldOut`、`loseFirstClick`、`cancelAfterMs`，用法见 README 的 Demo 一节。
 - **流程运行器。** 主页列出 `CodeFlows` 里登记的 Java DSL 流程、`assets/flows/` 和 `files/flows/`（`apex.py push`，用 `run-as` 写入）里的 JSON 流程；manifest 声明了 MAIN/LAUNCHER 的 `<queries>`，`launchApp` 才能拉起其他应用。
 - **ColorOS（已在 OPPO 真机上确认）：**
   - adb 不能执行 `settings put secure`，服务要在手机上手动开启。
   - **强制停止会把服务从已开启列表里移除**（这是 AOSP 的 `onPackagesForceStoppedLocked`，所有机型都一样），脚本里不要用 `am force-stop`。重置页面用 `am start -f 0x10008000`（NEW_TASK|CLEAR_TASK）。
   - adb 也不能 `pm grant` 运行时权限，要在界面上授予。
   - 首次 `adb install` 要在手机上确认，确认前命令会一直等着；之后的 `install -r` 一般直接成功。
-  - `adb install -r` 覆盖安装不会关掉服务；卸载后系统设置里还留着服务名，重新安装后才清掉。
+  - `adb install -r` 覆盖安装不会关掉服务；卸载后系统设置里还留着服务名，重新安装后才清掉（ColorOS 13；ColorOS 14 卸载后几秒内就清掉了）。
+  - Android 14 的系统权限弹窗（`GrantPermissionsActivity`）对不是辅助功能工具的无障碍服务隐藏，快照里一个窗口都没有：设置了 `filterTouchesWhenObscured` 的控件默认算 `accessibilityDataSensitive`（`View.calculateAccessibilityDataSensitive`），`AccessibilityInteractionController` 只把它们交给 `isAccessibilityTool` 的服务。0.6.1 起 SDK 的服务配置声明了 `isAccessibilityTool="true"`（用户决定：Apex 用来开发无障碍工具），README「接入」一节写了作用、上架要求和宿主怎么用同名资源关掉。
   - 首次 `adb install` 会弹「继续安装」确认（不要密码），`setup` 会在 adb 模式下点掉。
   - 无障碍服务的详情页 shell 没权限直接打开（`ACCESSIBILITY_DETAILS_SETTINGS` 要 `OPEN_ACCESSIBILITY_DETAILS_SETTINGS`），只能从无障碍设置列表里按服务名进去；开启时弹「要允许…完全控制你的设备吗？」，点「允许」。
   - `launchApp` 的落点：设置回到首页但保留列表滚动位置；时钟停在上次的标签页，新建面板会被关掉，多选模式会保留。

@@ -9,6 +9,9 @@
         </intent>
     </queries>
 
+    <!-- autorun=permission 用它弹出系统权限弹窗 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".DemoApp"
         android:allowBackup="false"

@@ -162,7 +162,8 @@ public class DispatcherTest {
         backend.monitor.onStart("host#1", "host");
         backend.monitor.onTrace(new TraceEvent(0, TraceEvent.Type.RUN_START, 4, null, "start"));
         backend.monitor.onStateEntered("home", 1);
-        backend.monitor.onTrace(new TraceEvent(1200, TraceEvent.Type.STATE_ENTER, 4, "home", "home (step 1)"));
+        backend.monitor.onTrace(new TraceEvent(200, TraceEvent.Type.STATE_ENTER, 4, "home", "home (step 1)"));
+        device.sleep(1200);
         JSONObject running = call("{\"cmd\": \"status\"}").getJSONObject("run");
         assertTrue(running.getBoolean("running"));
         assertEquals("host", running.getString("flowId"));
@@ -253,7 +254,7 @@ public class DispatcherTest {
     private final class FakeBackend implements Backend {
 
         final DevtoolsSession session = new DevtoolsSession(device, device, device, EngineConfig.DEFAULT);
-        final RunMonitor monitor = new RunMonitor();
+        final RunMonitor monitor = new RunMonitor(device);
         Boolean overlayVisible;
         boolean busy;
         boolean hang;

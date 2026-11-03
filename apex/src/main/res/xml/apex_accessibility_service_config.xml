@@ -2,12 +2,17 @@
 <!--
   事件只用来唤醒引擎，页面内容每轮主动抓取。
   flagReportViewIds：节点带资源 id；flagRetrieveInteractiveWindows：能拿到 Dialog/PopupWindow 等所有窗口。
+  isAccessibilityTool：Apex 用来开发无障碍工具。Android 14 起，对无障碍数据敏感的界面（系统权限弹窗等）
+  只对声明了它的服务可见、可操作。宿主不是无障碍工具时，用同名资源覆盖这个文件关掉它（见 README）。
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged|typeViewScrolled|typeViewTextChanged|typeViewClicked|typeViewFocused|typeViewSelected"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="true"
     android:description="@string/apex_accessibility_description"
-    android:notificationTimeout="50" />
+    android:notificationTimeout="50"
+    tools:targetApi="31" />

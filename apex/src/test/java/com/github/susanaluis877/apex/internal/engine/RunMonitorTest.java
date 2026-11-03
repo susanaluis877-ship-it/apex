@@ -14,7 +14,8 @@ import java.util.Collections;
 
 public class RunMonitorTest {
 
-    private final RunMonitor monitor = new RunMonitor();
+    private final long[] now = {5_000};
+    private final RunMonitor monitor = new RunMonitor(() -> now[0]);
 
     @Test
     public void tracksTheRunAndKeepsTheLastResult() {
@@ -23,6 +24,7 @@ public class RunMonitorTest {
         assertNull(monitor.view().getFlowId());
 
         monitor.onStart("demo#1", "demo");
+        assertEquals(0, monitor.view().getElapsedMs());
         monitor.onStateEntered("home", 1);
         for (int i = 0; i < RunMonitor.RECENT + 5; i++) {
             monitor.onTrace(new TraceEvent(i, TraceEvent.Type.WAIT, 3, "home", "waiting " + i));
@@ -33,7 +35,9 @@ public class RunMonitorTest {
         assertEquals(1, running.getStep());
         assertEquals("只保留最近的轨迹", RunMonitor.RECENT, running.getRecent().size());
         assertEquals("waiting 5", running.getRecent().get(0).getMessage());
-        assertEquals(RunMonitor.RECENT + 4, running.getElapsedMs());
+        now[0] += 7_300;
+        assertEquals("拷贝里的时间是取拷贝那一刻的", 0, running.getElapsedMs());
+        assertEquals("没有新轨迹时（长动作）已用时间也在走", 7_300, monitor.view().getElapsedMs());
 
         RunResult result = new RunResult(RunResult.Status.SUCCESS, "demo", "demo#1", "done",
                 Collections.singletonList("home"), Collections.emptyMap(), 1234, null, Collections.emptyList(), 0);

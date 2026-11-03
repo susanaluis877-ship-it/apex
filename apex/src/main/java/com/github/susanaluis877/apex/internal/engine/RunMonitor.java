@@ -24,12 +24,23 @@ public final class RunMonitor {
 
     private final Deque<TraceEvent> recent = new ArrayDeque<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    private final Clock clock;
+    private long startedAt;
     private String flowId;
     private String runId;
     private boolean running;
     private String stateId;
     private int step;
     private RunResult result;
+
+    public RunMonitor() {
+        this(Clock.SYSTEM);
+    }
+
+    /** @param clock 计算运行中的已用时间，测试里换成假时钟 */
+    public RunMonitor(Clock clock) {
+        this.clock = clock;
+    }
 
     public void addListener(Runnable listener) {
         listeners.add(listener);
@@ -43,6 +54,7 @@ public final class RunMonitor {
         synchronized (this) {
             this.runId = runId;
             this.flowId = flowId;
+            startedAt = clock.now();
             running = true;
             stateId = null;
             step = 0;
@@ -79,7 +91,9 @@ public final class RunMonitor {
     }
 
     public synchronized View view() {
-        return new View(flowId, runId, running, stateId, step, new ArrayList<>(recent), result);
+        // 运行中按时钟算：长动作（例如拨滚轮）期间没有新轨迹，取最近一条轨迹的时间会一直不动
+        long elapsed = result != null ? result.getDurationMs() : running ? clock.now() - startedAt : 0;
+        return new View(flowId, runId, running, stateId, step, new ArrayList<>(recent), result, elapsed);
     }
 
     private void changed() {
@@ -97,9 +111,10 @@ public final class RunMonitor {
         private final int step;
         private final List<TraceEvent> recent;
         private final RunResult result;
+        private final long elapsedMs;
 
         View(String flowId, String runId, boolean running, String stateId, int step, List<TraceEvent> recent,
-             RunResult result) {
+             RunResult result, long elapsedMs) {
             this.flowId = flowId;
             this.runId = runId;
             this.running = running;
@@ -107,6 +122,7 @@ public final class RunMonitor {
             this.step = step;
             this.recent = Collections.unmodifiableList(recent);
             this.result = result;
+            this.elapsedMs = elapsedMs;
         }
 
         public String getFlowId() {
@@ -140,12 +156,9 @@ public final class RunMonitor {
             return result;
         }
 
-        /** 运行了多久：取最近一条轨迹的时间，没有轨迹时为 0。 */
+        /** 运行了多久：运行中是从开始到取这份拷贝的时间，结束后是结果里的耗时，从没运行过时为 0。 */
         public long getElapsedMs() {
-            if (result != null) {
-                return result.getDurationMs();
-            }
-            return recent.isEmpty() ? 0 : recent.get(recent.size() - 1).getTimeMs();
+            return elapsedMs;
         }
     }
 }
