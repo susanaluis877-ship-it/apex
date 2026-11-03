@@ -587,7 +587,8 @@ class Toolkit:
         if checks and not all(ok for _, ok in checks):
             warnings.append("预期没有达成。先判断现在在哪、离目标是更近还是更远了，再决定是继续、后退还是换一条路")
         if before is not None and before.pkg != after.pkg and action.get("type") != "launchApp":
-            if after.pkg in PERMISSION_PACKAGES:
+            # 只认弹窗形态的：ColorOS 设置里的「权限管理」也属于 securitypermission，但它是铺满全屏的普通页面
+            if after.pkg in PERMISSION_PACKAGES and _top_is_dialog(after):
                 warnings.append("弹出了系统权限对话框（%s）。决定允许还是拒绝；流程里通常用拦截器处理它" % after.pkg)
             elif after.pkg not in session.meta.get("launched", []):
                 warnings.append("离开了 %s，进入了 %s。如果这不是要去的地方（广告、应用商店、别的应用），用 back 回去"

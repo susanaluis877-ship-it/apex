@@ -240,6 +240,36 @@ class ToolHelpersTest(unittest.TestCase):
         self.assertTrue(_matches_local(screen, {"id": "switch_widget"}))
         self.assertFalse(_matches_local(screen, {"text": "不存在"}))
 
+    def test_permission_warning_only_for_dialogs(self):
+        # 窗口大小取自真机：ColorOS 13 的运行时权限弹窗，和 ColorOS 14 设置里点进去的「权限管理」整页
+        def page(pkg, bounds):
+            root = {"cls": "android.widget.FrameLayout", "h": 0, "b": bounds, "pkg": pkg, "ch": [
+                {"cls": "android.widget.TextView", "h": 1, "b": [bounds[0], bounds[1], bounds[2], bounds[1] + 100],
+                 "text": "便签", "pkg": pkg}]}
+            return Screen({"format": 1, "seq": 3, "pkg": pkg, "activity": pkg + ".X", "w": 1080, "h": 2412,
+                           "partial": False, "windows": [{"id": 1, "layer": 0, "active": True, "root": root}]})
+
+        tmp = tempfile.TemporaryDirectory()
+        os.environ["APEX_HOME"] = tmp.name
+        try:
+            session = Session.start("看权限")
+            before = page("com.android.settings", [0, 0, 1080, 2412])
+            ok = {"status": "OK", "changed": True}
+            click = {"type": "click"}
+
+            def warnings(after):
+                p, new = session.identify(after)
+                return " / ".join(Toolkit._warnings(session, before, after, p, new, ok, click, []))
+
+            dialog = warnings(page("com.android.permissioncontroller", [60, 422, 1020, 1965]))
+            self.assertIn("系统权限对话框", dialog)
+            full = warnings(page("com.oplus.securitypermission", [0, 0, 1080, 2412]))
+            self.assertNotIn("系统权限对话框", full)
+            self.assertIn("进入了 com.oplus.securitypermission", full)
+        finally:
+            del os.environ["APEX_HOME"]
+            tmp.cleanup()
+
     def test_simple_actions_need_no_device(self):
         kit = Toolkit.__new__(Toolkit)
         self.assertEqual(({"type": "back"}, None), kit.resolve_action("back"))
